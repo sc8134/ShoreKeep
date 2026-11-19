@@ -122,7 +122,7 @@ powershell -ExecutionPolicy Bypass -File infra/windows/build.ps1
 
 This produces:
 
-- `dist\Shorekeep\Shorekeep.exe`: the portable app (tray icon, starts or reuses the local agent, handles `shorekeep://` links);
+- `dist\Shorekeep\Shorekeep.exe`: the portable app. Launched normally it starts the bundled web app (API, UI, and worker) on `http://127.0.0.1:8000`, opens a native window against it, and keeps a tray icon; it also starts or reuses the local download agent and handles `shorekeep://` links. The same UI stays available in any browser at `http://127.0.0.1:8000`;
 - `dist\installer\Shorekeep-Setup-0.2.0.exe`: a self-extracting setup built with the same local PyInstaller toolchain.
 
 The setup installs to `%LOCALAPPDATA%\Programs\Shorekeep` for the current user only (no admin prompt), registers `shorekeep://` under `HKCU`, adds a Start Menu shortcut and an entry in Settings > Apps, and optionally starts the app at sign-in. `--silent` and `--no-autostart` are supported for scripted test installs. Uninstall from Settings > Apps or run the installed `uninstall.ps1`; it stops the app and removes the program folder, protocol, autostart entry, shortcut, and Settings > Apps entry. Your device token, settings, and log in `%APPDATA%\Shorekeep` and your files in `%USERPROFILE%\Downloads\Shorekeep` are kept, so delete those folders by hand for a full wipe.

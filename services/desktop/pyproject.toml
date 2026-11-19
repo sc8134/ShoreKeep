@@ -18,7 +18,7 @@ dependencies = [
 
 [project.optional-dependencies]
 tray = ["pystray>=0.19", "pillow>=10"]
-build = ["pyinstaller>=6.10", "pystray>=0.19", "pillow>=10"]
+build = ["pyinstaller>=6.10", "pystray>=0.19", "pillow>=10", "pywebview>=5.0"]
 
 [project.scripts]
 shorekeep-desktop = "mydl_desktop.agent:main"

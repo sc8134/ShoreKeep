@@ -14,12 +14,14 @@ hiddenimports += collect_submodules("uvicorn")
 hiddenimports += collect_submodules("mydl")
 hiddenimports += collect_submodules("yt_dlp")
 hiddenimports += collect_submodules("mydl_desktop")
-hiddenimports += collect_submodules("backend.engine")
-hiddenimports += ["backend.cookies", "backend.security", "backend.config", "backend.models"]
-hiddenimports += ["pystray._win32"]
+hiddenimports += collect_submodules("backend")
+hiddenimports += collect_submodules("webview")
+hiddenimports += collect_submodules("sqlalchemy.dialects.sqlite")
+hiddenimports += ["pystray._win32", "httptools", "h11", "clr", "clr_loader"]
 
 datas, binaries, ffmpeg_hidden = collect_all("imageio_ffmpeg")
 datas += collect_data_files("mydl_desktop")
+datas += collect_data_files("backend")
 hiddenimports += ffmpeg_hidden
 
 a = Analysis(

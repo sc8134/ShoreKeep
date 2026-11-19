@@ -46,7 +46,22 @@ def _open_path(path) -> None:
         webbrowser.open(path.as_uri() if hasattr(path, "as_uri") else str(path))
 
 
-def run_tray(config: AgentConfig) -> int:
+def _stop(child: subprocess.Popen | None) -> None:
+    if child is None or child.poll() is not None:
+        return
+    child.terminate()
+    try:
+        child.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        child.kill()
+
+
+def run_tray(
+    config: AgentConfig,
+    web_child: subprocess.Popen | None = None,
+    window_child: subprocess.Popen | None = None,
+) -> int:
+    from . import window
     from .agent import health, start_agent
 
     child: subprocess.Popen | None = None
@@ -76,7 +91,11 @@ def run_tray(config: AgentConfig) -> int:
             logger.exception("could not open %s", path)
 
     def open_site(_icon, _item) -> None:
-        webbrowser.open(config.server_base)
+        nonlocal window_child
+        if window_child is None or window_child.poll() is not None:
+            window_child = window.spawn(config)
+        if window_child is None:
+            webbrowser.open(config.server_base)
 
     def quit_app(icon, _item) -> None:
         icon.stop()
@@ -92,10 +111,7 @@ def run_tray(config: AgentConfig) -> int:
     try:
         icon.run()
     finally:
-        if child is not None and child.poll() is None:
-            child.terminate()
-            try:
-                child.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                child.kill()
+        _stop(window_child)
+        _stop(child)
+        _stop(web_child)
     return 0

@@ -100,7 +100,7 @@ def set_autostart(exe: Path, enabled: bool) -> None:
     run_key = r"Software\Microsoft\Windows\CurrentVersion\Run"
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key, 0, winreg.KEY_SET_VALUE) as key:
         if enabled:
-            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, f'"{exe}"')
+            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, f'"{exe}" --minimized')
         else:
             try:
                 winreg.DeleteValue(key, APP_NAME)
