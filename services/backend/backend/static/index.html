@@ -1,0 +1,1217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shorekeep</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/shorekeep-192.png">
+<style>
+  @font-face {
+    font-family: "Sora";
+    src: url("/fonts/sora-latin-var.woff2") format("woff2");
+    font-weight: 400 700;
+    font-style: normal;
+    font-display: swap;
+  }
+  :root {
+    --bg: #070b14;
+    --panel: rgba(18, 26, 43, 0.72);
+    --panel-border: rgba(94, 234, 212, 0.16);
+    --text: #e8eefc;
+    --muted: #8f9cba;
+    --accent: #2dd4bf;
+    --accent-2: #60a5fa;
+    --sand: #f6c177;
+    --danger: #fb7185;
+    --ok: #34d399;
+    --radius: 18px;
+    --font-display: "Sora", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  html, body { min-height: 100%; }
+  body {
+    margin: 0;
+    font-family: var(--font-display);
+    color: var(--text);
+    background: transparent;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 20px 32px;
+  }
+  .shell { width: 100%; max-width: 720px; }
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    min-height: 40px; margin-bottom: 20px;
+  }
+  .topbar .spacer { flex: 1; }
+  .account { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+  .who { font-size: 13.5px; color: var(--text); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .quota { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .app-pill {
+    font-size: 11.5px; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--muted); background: rgba(139, 152, 184, 0.1);
+    border: 1px solid rgba(139, 152, 184, 0.16); border-radius: 999px;
+    padding: 5px 10px; cursor: pointer; white-space: nowrap;
+  }
+  .app-pill.online { color: var(--ok); border-color: rgba(52, 211, 153, 0.35); background: rgba(52, 211, 153, 0.08); }
+  .app-pill.offline { color: var(--muted); }
+  .sea {
+    position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none;
+    background:
+      radial-gradient(1200px 700px at 50% -12%, #0b1a2c 0%, transparent 62%),
+      linear-gradient(180deg, #060a12 0%, #071120 55%, #05080f 100%);
+  }
+  .sea-halo {
+    position: absolute; top: -90px; left: 50%; width: min(860px, 112vw); height: 560px;
+    transform: translateX(-50%);
+    background: radial-gradient(closest-side,
+      rgba(45, 212, 191, 0.20),
+      rgba(96, 165, 250, 0.10) 46%,
+      rgba(246, 193, 119, 0.05) 63%,
+      transparent 76%);
+    filter: blur(22px);
+  }
+  .swell {
+    position: absolute; left: 0; bottom: -2vh; width: 200%; height: 52vh; min-height: 260px;
+    display: flex; will-change: transform;
+  }
+  .swell svg { display: block; width: 50%; height: 100%; }
+  .swell-1 { opacity: 0.85; animation: drift 54s linear infinite; }
+  .swell-2 { bottom: -7vh; opacity: 0.7; animation: drift 78s linear infinite reverse; }
+  .swell-3 { bottom: -11vh; opacity: 0.9; animation: drift 96s linear infinite; }
+  .paused .swell { animation-play-state: paused; }
+  @keyframes drift {
+    from { transform: translate3d(0, 0, 0); }
+    to { transform: translate3d(-50%, 0, 0); }
+  }
+  .sea-grain {
+    position: absolute; inset: 0; opacity: 0.05;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .sea::after {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(120% 90% at 50% 30%, transparent 55%, rgba(3, 6, 12, 0.55));
+  }
+  header { position: relative; text-align: center; margin-bottom: 26px; }
+  .mark-wrap {
+    position: relative; width: 64px; height: 64px; margin: 0 auto 20px;
+    display: grid; place-items: center; animation: float 8s ease-in-out infinite;
+  }
+  .mark-wrap::before {
+    content: ""; position: absolute; inset: -46px; border-radius: 50%;
+    background: radial-gradient(closest-side,
+      rgba(45, 212, 191, 0.26),
+      rgba(96, 165, 250, 0.10) 55%,
+      transparent 72%);
+    filter: blur(8px);
+  }
+  .mark-wrap::after {
+    content: ""; position: absolute; inset: -13px; border-radius: 26px;
+    border: 1px solid rgba(94, 234, 212, 0.16);
+    box-shadow: inset 0 0 26px rgba(45, 212, 191, 0.07);
+  }
+  .mark {
+    position: relative; display: block; width: 64px; height: 64px; border-radius: 18px;
+    box-shadow: 0 18px 44px rgba(2, 8, 18, 0.55);
+    filter: drop-shadow(0 0 18px rgba(45, 212, 191, 0.18));
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-5px); }
+  }
+  h1 {
+    margin: 0 0 10px;
+    font-size: clamp(30px, 5vw, 40px);
+    font-weight: 650;
+    letter-spacing: -0.035em;
+    line-height: 1.05;
+    color: var(--text);
+  }
+  @supports (background-clip: text) {
+    h1 {
+      background: linear-gradient(180deg, #ffffff 18%, #c8f8ef 68%, #93dcf8 100%);
+      background-clip: text;
+      -webkit-background-clip: text;
+      color: transparent;
+    }
+  }
+  .sub { margin: 0; color: var(--muted); font-size: 15.5px; letter-spacing: 0.005em; }
+  .card {
+    position: relative;
+    background: linear-gradient(180deg, rgba(20, 30, 48, 0.72), rgba(11, 18, 32, 0.82));
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius);
+    padding: 24px;
+    backdrop-filter: blur(16px) saturate(125%);
+    box-shadow: 0 30px 90px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+  .card::before {
+    content: ""; position: absolute; top: 0; left: 12%; right: 12%; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(94, 234, 212, 0.45), transparent);
+  }
+  form { display: grid; gap: 16px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  input[type="url"], input[type="email"], input[type="password"], textarea {
+    flex: 1 1 320px;
+    min-width: 0;
+    padding: 15px 17px;
+    border-radius: 14px;
+    border: 1px solid rgba(139, 152, 184, 0.22);
+    background: rgba(4, 9, 17, 0.62);
+    color: var(--text);
+    font-size: 15px;
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    font-family: inherit;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  }
+  input:focus, textarea:focus {
+    border-color: rgba(94, 234, 212, 0.7);
+    box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.14), 0 0 26px rgba(45, 212, 191, 0.10);
+  }
+  input::placeholder, textarea::placeholder { color: #5d6a88; }
+  button { font: inherit; cursor: pointer; border: none; border-radius: 12px; }
+  .primary {
+    padding: 15px 24px;
+    border-radius: 14px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: #04121a;
+    background: linear-gradient(135deg, #34e0c8 0%, #38bdf8 55%, #60a5fa 100%);
+    box-shadow: 0 10px 30px rgba(45, 212, 191, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+    transition: transform 0.12s, box-shadow 0.12s, opacity 0.12s;
+    white-space: nowrap;
+  }
+  .primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 14px 36px rgba(45, 212, 191, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  }
+  .primary:disabled { opacity: 0.55; cursor: not-allowed; }
+  button.app {
+    padding: 15px 18px; border-radius: 14px; font-weight: 600; white-space: nowrap;
+    color: var(--accent); background: rgba(45, 212, 191, 0.08);
+    border: 1px solid rgba(45, 212, 191, 0.4);
+    transition: background 0.15s, box-shadow 0.15s;
+  }
+  button.app:hover:not(:disabled) {
+    background: rgba(45, 212, 191, 0.16);
+    box-shadow: 0 8px 24px rgba(45, 212, 191, 0.12);
+  }
+  button.app:hover:not(:disabled) { background: rgba(45, 212, 191, 0.16); }
+  button.app:disabled { opacity: 0.55; cursor: not-allowed; }
+  .ghost {
+    padding: 9px 14px; font-size: 13px; color: var(--text);
+    background: rgba(139, 152, 184, 0.12);
+    border: 1px solid rgba(139, 152, 184, 0.2);
+    transition: background 0.15s;
+  }
+  .ghost:hover { background: rgba(139, 152, 184, 0.2); }
+  .presets { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip {
+    padding: 9px 15px;
+    border-radius: 999px;
+    font-size: 13.5px;
+    color: var(--muted);
+    background: rgba(139, 152, 184, 0.07);
+    border: 1px solid rgba(139, 152, 184, 0.08);
+    transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  }
+  .chip:hover:not(:disabled) { color: var(--text); background: rgba(139, 152, 184, 0.14); }
+  .chip[aria-pressed="true"] {
+    color: var(--accent);
+    border-color: rgba(45, 212, 191, 0.45);
+    background: rgba(45, 212, 191, 0.1);
+    box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.10), 0 8px 22px rgba(45, 212, 191, 0.08);
+  }
+  .chip:disabled { opacity: 0.4; cursor: not-allowed; }
+  .chip .lock { font-size: 11px; vertical-align: 1px; }
+  .advanced { border-top: 1px solid rgba(139, 152, 184, 0.14); padding-top: 14px; }
+  .advanced summary {
+    cursor: pointer; font-size: 13.5px; color: var(--muted); user-select: none;
+  }
+  .advanced[open] summary { color: var(--text); margin-bottom: 10px; }
+  .advanced textarea { width: 100%; min-height: 96px; resize: vertical; font-size: 12.5px; font-family: ui-monospace, Consolas, monospace; }
+  .hint { font-size: 12px; color: #5d6a88; line-height: 1.55; margin: 8px 0 0; }
+  .file-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+  .file-row label { font-size: 12.5px; color: var(--muted); }
+  input[type="file"] { font-size: 12.5px; color: var(--muted); }
+  .turnstile { display: flex; justify-content: flex-start; }
+  .status-line { display: flex; align-items: center; gap: 10px; min-height: 20px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.active { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+  .dot.ok { background: var(--ok); }
+  .dot.err { background: var(--danger); }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+  #job { display: none; margin-top: 20px; }
+  #job.visible { display: block; }
+  .job-head { display: flex; gap: 14px; align-items: flex-start; }
+  .thumb {
+    width: 120px; aspect-ratio: 16 / 9; border-radius: 10px; object-fit: cover;
+    background: rgba(7, 11, 20, 0.6); flex: none;
+  }
+  .job-meta { min-width: 0; flex: 1; }
+  .job-title {
+    margin: 0 0 6px; font-size: 15.5px; font-weight: 600; line-height: 1.35;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    word-break: break-word;
+  }
+  .badges { display: flex; gap: 8px; flex-wrap: wrap; }
+  .badge {
+    font-size: 11.5px; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--muted); background: rgba(139, 152, 184, 0.1);
+    border-radius: 999px; padding: 4px 9px;
+  }
+  .badge.engine { color: var(--accent-2); }
+  .badge.client { color: var(--ok); }
+  .app-panel { margin-top: 18px; display: none; }
+  .app-panel.visible { display: block; }
+  .app-panel h2 { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+  .app-panel .hint { margin-top: 10px; }
+  .steps { margin: 10px 0 4px; padding-left: 20px; font-size: 13px; color: var(--muted); line-height: 1.9; }
+  .steps code {
+    font-family: ui-monospace, Consolas, monospace; font-size: 12.5px;
+    color: var(--accent); background: rgba(7, 11, 20, 0.7);
+    border: 1px solid rgba(139, 152, 184, 0.18); padding: 2px 6px; border-radius: 6px;
+  }
+  .browser-list { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .browser { font-size: 12px; color: var(--muted); border: 1px solid rgba(139, 152, 184, 0.16); border-radius: 999px; padding: 4px 10px; }
+  .browser.yes { color: var(--text); border-color: rgba(45, 212, 191, 0.3); }
+  .browser .tip { color: #5d6a88; }
+  .bar {
+    height: 8px; border-radius: 999px; margin: 16px 0 10px; overflow: hidden;
+    background: rgba(139, 152, 184, 0.12);
+  }
+  .bar > div {
+    height: 100%; width: 0; border-radius: inherit;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    transition: width 0.4s ease;
+  }
+  .bar.indeterminate > div { width: 35% !important; animation: slide 1.3s ease-in-out infinite; }
+  @keyframes slide { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
+  .stats { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 13px; flex-wrap: wrap; }
+  .error {
+    display: none; margin-top: 14px; padding: 12px 14px; border-radius: 10px;
+    background: rgba(251, 113, 133, 0.08); border: 1px solid rgba(251, 113, 133, 0.25);
+    color: #fda4af; font-size: 13.5px; line-height: 1.5; word-break: break-word;
+  }
+  .error.visible { display: block; }
+  .download { display: none; margin-top: 18px; }
+  .download.visible { display: block; }
+  .download a {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 14px; border-radius: 12px; text-decoration: none; font-weight: 600;
+    color: #04121a; background: linear-gradient(135deg, var(--ok), var(--accent));
+    min-width: 0;
+  }
+  #download-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .history { margin-top: 18px; display: none; }
+  .history.visible { display: block; }
+  .history h2 { margin: 0 0 12px; font-size: 15px; font-weight: 600; color: var(--text); }
+  .history ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr); }
+  .history li {
+    display: flex; align-items: center; gap: 10px; min-width: 0;
+    padding: 10px 12px; border-radius: 10px; background: rgba(7, 11, 20, 0.45);
+    border: 1px solid rgba(139, 152, 184, 0.12); font-size: 13px;
+  }
+  .history .hname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .history .hstatus { color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; flex: none; }
+  .history .hstatus.done { color: var(--ok); }
+  .history .hstatus.failed, .history .hstatus.expired { color: var(--danger); }
+  .history .hdevice { color: var(--accent-2); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; flex: none; }
+  .history a { color: var(--accent-2); font-size: 12.5px; text-decoration: none; flex: none; }
+  .history a:hover { text-decoration: underline; }
+  .history .empty { color: var(--muted); font-size: 13px; }
+  footer { margin-top: 26px; text-align: center; color: #5d6a88; font-size: 12.5px; line-height: 1.6; }
+  footer strong { color: var(--muted); font-weight: 500; }
+
+  dialog {
+    border: 1px solid rgba(139, 152, 184, 0.22);
+    background: #0f1626; color: var(--text);
+    border-radius: var(--radius); padding: 24px; width: min(92vw, 400px);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.65);
+  }
+  dialog::backdrop { background: rgba(3, 6, 12, 0.72); backdrop-filter: blur(4px); }
+  dialog h2 { margin: 0 0 18px; font-size: 19px; }
+  dialog form { gap: 12px; }
+  dialog input { flex: 1 1 auto; }
+  .auth-error { display: none; margin: 0; font-size: 12.5px; color: #fda4af; line-height: 1.45; }
+  .auth-error.visible { display: block; }
+  .auth-actions { display: flex; gap: 10px; align-items: center; }
+  .auth-actions .primary { flex: 1; }
+  .auth-switch { margin: 4px 0 0; font-size: 13px; color: var(--muted); text-align: center; }
+  .auth-switch a { color: var(--accent); text-decoration: none; }
+  .auth-switch a:hover { text-decoration: underline; }
+
+  @media (max-width: 520px) {
+    .thumb { display: none; }
+    body { padding-top: 16px; }
+    .topbar { margin-bottom: 12px; }
+    .swell { height: 44vh; }
+    .sea-halo { top: -50px; height: 440px; }
+    .mark-wrap { margin-bottom: 16px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+  @media (forced-colors: active) {
+    h1 { background: none; color: CanvasText; }
+    .card { border-color: CanvasText; }
+  }
+</style>
+</head>
+<body>
+<div class="sea" aria-hidden="true">
+  <div class="sea-halo"></div>
+  <div class="swell swell-1">
+    <svg viewBox="0 0 1440 320" preserveAspectRatio="none"><path d="M0 176 Q180 142 360 176 T720 176 T1080 176 T1440 176 L1440 320 L0 320 Z" fill="rgba(45, 212, 191, 0.11)" stroke="rgba(94, 234, 212, 0.28)" stroke-width="1"/></svg>
+    <svg viewBox="0 0 1440 320" preserveAspectRatio="none"><path d="M0 176 Q180 142 360 176 T720 176 T1080 176 T1440 176 L1440 320 L0 320 Z" fill="rgba(45, 212, 191, 0.11)" stroke="rgba(94, 234, 212, 0.28)" stroke-width="1"/></svg>
+  </div>
+  <div class="swell swell-2">
+    <svg viewBox="0 0 1440 320" preserveAspectRatio="none"><path d="M0 216 Q180 176 360 216 T720 216 T1080 216 T1440 216 L1440 320 L0 320 Z" fill="rgba(96, 165, 250, 0.09)" stroke="rgba(96, 165, 250, 0.20)" stroke-width="1"/></svg>
+    <svg viewBox="0 0 1440 320" preserveAspectRatio="none"><path d="M0 216 Q180 176 360 216 T720 216 T1080 216 T1440 216 L1440 320 L0 320 Z" fill="rgba(96, 165, 250, 0.09)" stroke="rgba(96, 165, 250, 0.20)" stroke-width="1"/></svg>
+  </div>
+  <div class="swell swell-3">
+    <svg viewBox="0 0 1440 320" preserveAspectRatio="none"><path d="M0 266 Q120 240 240 266 T480 266 T720 266 T960 266 T1200 266 T1440 266 L1440 320 L0 320 Z" fill="rgba(94, 234, 212, 0.07)" stroke="rgba(94, 234, 212, 0.16)" stroke-width="1"/></svg>
+    <svg viewBox="0 0 1440 320" preserveAspectRatio="none"><path d="M0 266 Q120 240 240 266 T480 266 T720 266 T960 266 T1200 266 T1440 266 L1440 320 L0 320 Z" fill="rgba(94, 234, 212, 0.07)" stroke="rgba(94, 234, 212, 0.16)" stroke-width="1"/></svg>
+  </div>
+  <div class="sea-grain"></div>
+</div>
+<div class="shell">
+  <div class="topbar">
+    <span class="spacer"></span>
+    <div class="account" id="account">
+      <button class="app-pill offline" id="agent-pill" type="button" hidden>Shorekeep app</button>
+      <span class="who" id="who" hidden></span>
+      <span class="quota" id="quota" hidden></span>
+      <button class="ghost" id="auth-open" type="button">Sign in</button>
+      <button class="ghost" id="signout" type="button" hidden>Sign out</button>
+    </div>
+  </div>
+
+  <header>
+    <div class="mark-wrap">
+      <img class="mark" src="/shorekeep-192.png" alt="Shorekeep" width="64" height="64">
+    </div>
+    <h1>Shorekeep</h1>
+    <p class="sub">Paste a link. Pick a format. Keep it.</p>
+  </header>
+
+  <main class="card">
+    <form id="form" novalidate>
+      <div class="row">
+        <input id="url" type="url" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off" spellcheck="false" required>
+        <button class="primary" id="submit" type="submit">Fetch media</button>
+        <button class="app" id="app-submit" type="button">Download with Shorekeep</button>
+      </div>
+      <div class="presets" role="group" aria-label="Output format">
+        <button type="button" class="chip" data-preset="best" aria-pressed="true">Best quality</button>
+        <button type="button" class="chip" data-preset="1080p" aria-pressed="false">1080p</button>
+        <button type="button" class="chip" data-preset="720p" aria-pressed="false">720p</button>
+        <button type="button" class="chip" data-preset="480p" aria-pressed="false">480p</button>
+        <button type="button" class="chip" data-preset="audio" aria-pressed="false">MP3 audio</button>
+      </div>
+
+      <div class="turnstile" id="turnstile" hidden></div>
+
+      <details class="advanced" id="cookies-box" hidden>
+        <summary>Use my cookies (cookies.txt) for signed-in sites</summary>
+        <textarea id="cookies" spellcheck="false" placeholder="# Netscape HTTP Cookie File&#10;.example.com&#9;TRUE&#9;/&#9;TRUE&#9;1893456000&#9;session&#9;value"></textarea>
+        <div class="file-row">
+          <label for="cookies-file">Load from file:</label>
+          <input id="cookies-file" type="file" accept=".txt,text/plain">
+          <button type="button" class="ghost" id="cookies-clear">Clear</button>
+        </div>
+        <p class="hint">Cookies are encrypted, used only for this job, and deleted when it finishes. Never share your account cookies. DRM and paywall bypass are not supported.</p>
+      </details>
+    </form>
+
+    <section id="job" aria-live="polite">
+      <div class="job-head">
+        <img id="thumb" class="thumb" alt="" referrerpolicy="no-referrer" hidden>
+        <div class="job-meta">
+          <p class="job-title" id="job-title">Preparing…</p>
+          <div class="badges">
+            <span class="badge" id="stage-badge">Queued</span>
+            <span class="badge engine" id="engine-badge" hidden></span>
+            <span class="badge client" id="client-badge" hidden></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="bar" id="bar"><div id="bar-fill"></div></div>
+      <div class="status-line">
+        <span class="dot active" id="dot"></span>
+        <span class="stats">
+          <span id="stat-progress">0%</span>
+          <span id="stat-size"></span>
+          <span id="stat-speed"></span>
+          <span id="stat-eta"></span>
+        </span>
+      </div>
+
+      <div class="error" id="error"></div>
+
+      <div class="download" id="download">
+        <a id="download-link" href="#" download>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 3h2v10.2l3.6-3.6L18 11.2 12 17l-6-5.8 1.4-1.6L11 13.2V3zM4 20h16v2H4z"/></svg>
+          <span id="download-label">Download</span>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <section class="card app-panel" id="app-panel">
+    <h2>Download on this device</h2>
+    <p class="hint" id="agent-state">Checking for the Shorekeep app…</p>
+    <ol class="steps">
+      <li>Install Shorekeep for Windows once. The installer registers <code>shorekeep://</code> links.</li>
+      <li>Reload this page, then click “Download with Shorekeep”. The file is saved to your <strong>Downloads/Shorekeep</strong> folder.</li>
+    </ol>
+    <div class="browser-list" id="browser-list"></div>
+    <div class="file-row">
+      <button class="ghost" id="agent-recheck" type="button">Check again</button>
+    </div>
+    <p class="hint">Files download straight to your computer and your browser cookies stay on your machine. Firefox is the most reliable browser for automatic sign-in cookies; browsers released after mid-2024 (Chrome, Edge, Brave) may block automatic cookie reads.</p>
+  </section>
+
+  <section class="card history" id="history">
+    <h2>Recent downloads</h2>
+    <ul id="history-list"></ul>
+  </section>
+
+  <footer>
+    <div>Download only content you own or have the rights to use.</div>
+    <div>Files are deleted automatically after <strong>1 hour</strong>. No DRM content, no paywall bypass.</div>
+  </footer>
+</div>
+
+<dialog id="auth-dialog">
+  <h2 id="auth-title">Sign in</h2>
+  <form id="auth-form">
+    <input id="auth-email" type="email" placeholder="you@example.com" autocomplete="email" required>
+    <input id="auth-password" type="password" placeholder="Password (8+ characters)" autocomplete="current-password" required>
+    <p class="auth-error" id="auth-error"></p>
+    <div class="auth-actions">
+      <button class="primary" id="auth-submit" type="submit">Sign in</button>
+      <button class="ghost" id="auth-close" type="button">Cancel</button>
+    </div>
+    <p class="auth-switch">No account? <a href="#" id="auth-switch">Create one free</a></p>
+  </form>
+</dialog>
+
+<script>
+(function () {
+  "use strict";
+
+  const page = document.documentElement;
+  document.addEventListener("visibilitychange", function () {
+    page.classList.toggle("paused", document.hidden);
+  });
+
+  const form = document.getElementById("form");
+  const urlInput = document.getElementById("url");
+  const submitBtn = document.getElementById("submit");
+  const chips = Array.from(document.querySelectorAll(".chip"));
+  const jobBox = document.getElementById("job");
+  const titleEl = document.getElementById("job-title");
+  const thumbEl = document.getElementById("thumb");
+  const stageBadge = document.getElementById("stage-badge");
+  const engineBadge = document.getElementById("engine-badge");
+  const bar = document.getElementById("bar");
+  const barFill = document.getElementById("bar-fill");
+  const dot = document.getElementById("dot");
+  const statProgress = document.getElementById("stat-progress");
+  const statSize = document.getElementById("stat-size");
+  const statSpeed = document.getElementById("stat-speed");
+  const statEta = document.getElementById("stat-eta");
+  const errorBox = document.getElementById("error");
+  const downloadBox = document.getElementById("download");
+  const downloadLink = document.getElementById("download-link");
+  const downloadLabel = document.getElementById("download-label");
+  const cookiesBox = document.getElementById("cookies-box");
+  const cookiesInput = document.getElementById("cookies");
+  const cookiesFile = document.getElementById("cookies-file");
+  const cookiesClear = document.getElementById("cookies-clear");
+  const turnstileBox = document.getElementById("turnstile");
+  const accountWho = document.getElementById("who");
+  const accountQuota = document.getElementById("quota");
+  const authOpen = document.getElementById("auth-open");
+  const signoutBtn = document.getElementById("signout");
+  const historyBox = document.getElementById("history");
+  const historyList = document.getElementById("history-list");
+  const appSubmit = document.getElementById("app-submit");
+  const agentPill = document.getElementById("agent-pill");
+  const appPanel = document.getElementById("app-panel");
+  const agentState = document.getElementById("agent-state");
+  const browserList = document.getElementById("browser-list");
+  const agentRecheck = document.getElementById("agent-recheck");
+  const clientBadge = document.getElementById("client-badge");
+
+  const authDialog = document.getElementById("auth-dialog");
+  const authForm = document.getElementById("auth-form");
+  const authTitle = document.getElementById("auth-title");
+  const authEmail = document.getElementById("auth-email");
+  const authPassword = document.getElementById("auth-password");
+  const authError = document.getElementById("auth-error");
+  const authSubmit = document.getElementById("auth-submit");
+  const authClose = document.getElementById("auth-close");
+  const authSwitch = document.getElementById("auth-switch");
+
+  const STAGE_LABELS = {
+    queued: "Queued",
+    extracting: "Reading media info",
+    downloading: "Downloading",
+    processing: "Processing media",
+    uploading: "Preparing download",
+    done: "Ready",
+    failed: "Failed",
+    expired: "Expired"
+  };
+  const TERMINAL = new Set(["done", "failed", "expired"]);
+  const PRESET_RANK = { "480p": 1, "720p": 2, "1080p": 3, "best": 4 };
+
+  let preset = "best";
+  let eventSource = null;
+  let pollTimer = null;
+  let config = null;
+  let me = null;
+  let authMode = "login";
+  let turnstileReady = false;
+
+  const AGENT_BASE = "http://127.0.0.1:47821";
+  let agent = null;
+  let agentKey = null;
+  let agentWaitTimer = null;
+
+  chips.forEach(function (chip) {
+    chip.addEventListener("click", function () {
+      if (chip.disabled) return;
+      preset = chip.dataset.preset;
+      chips.forEach(function (c) { c.setAttribute("aria-pressed", String(c === chip)); });
+    });
+  });
+
+  function formatBytes(n) {
+    if (!n && n !== 0) return "";
+    const units = ["B", "KB", "MB", "GB"];
+    let value = n, i = 0;
+    while (value >= 1024 && i < units.length - 1) { value /= 1024; i++; }
+    return (i === 0 ? Math.round(value) : value.toFixed(1)) + " " + units[i];
+  }
+
+  function formatSpeed(bps) {
+    if (!bps) return "";
+    return formatBytes(bps) + "/s";
+  }
+
+  function formatEta(seconds) {
+    if (seconds === null || seconds === undefined || !isFinite(seconds)) return "";
+    const total = Math.max(0, Math.round(seconds));
+    const m = Math.floor(total / 60), s = total % 60;
+    return "ETA " + m + ":" + String(s).padStart(2, "0");
+  }
+
+  async function api(path, options) {
+    const response = await fetch(path, options);
+    let body = null;
+    try { body = await response.json(); } catch (e) { /* empty body */ }
+    return { ok: response.ok, status: response.status, body: body };
+  }
+
+  function stopTracking() {
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    if (agentWaitTimer) { clearInterval(agentWaitTimer); agentWaitTimer = null; }
+  }
+
+  function resetJobView() {
+    errorBox.classList.remove("visible");
+    errorBox.textContent = "";
+    downloadBox.classList.remove("visible");
+    thumbEl.hidden = true;
+    engineBadge.hidden = true;
+    clientBadge.hidden = true;
+    bar.classList.remove("indeterminate");
+    barFill.style.width = "0%";
+    dot.className = "dot active";
+    statSize.textContent = "";
+    statSpeed.textContent = "";
+    statEta.textContent = "";
+  }
+
+  function render(job) {
+    jobBox.classList.add("visible");
+    titleEl.textContent = job.title || job.output_name || "Media";
+    stageBadge.textContent = STAGE_LABELS[job.stage] || job.stage;
+    statProgress.textContent = Math.round(job.progress || 0) + "%";
+    barFill.style.width = (job.progress || 0) + "%";
+
+    if (job.engine) {
+      engineBadge.hidden = false;
+      engineBadge.textContent = job.engine === "mydl" ? "MY-DL engine" : "yt-dlp engine";
+    }
+
+    if (job.client === "desktop") {
+      clientBadge.hidden = false;
+      clientBadge.textContent = "Shorekeep app" + (job.saved_to ? " · " + job.saved_to : "");
+      clientBadge.title = "This file is downloading to your computer";
+    } else {
+      clientBadge.hidden = true;
+    }
+
+    if (job.thumbnail) {
+      thumbEl.src = job.thumbnail;
+      thumbEl.hidden = false;
+    }
+
+    if (job.total_bytes) {
+      statSize.textContent = formatBytes(job.downloaded_bytes) + " / " + formatBytes(job.total_bytes);
+    } else if (job.downloaded_bytes) {
+      statSize.textContent = formatBytes(job.downloaded_bytes);
+    }
+    statSpeed.textContent = job.status === "downloading" ? formatSpeed(job.speed_bps) : "";
+    statEta.textContent = job.status === "downloading" ? formatEta(job.eta_seconds) : "";
+
+    if (job.status === "downloading" && !job.total_bytes) {
+      bar.classList.add("indeterminate");
+    } else {
+      bar.classList.remove("indeterminate");
+    }
+
+    if (job.status === "failed") {
+      dot.className = "dot err";
+      errorBox.textContent = job.error || "Something went wrong.";
+      errorBox.classList.add("visible");
+      submitBtn.disabled = false;
+    }
+
+    if (job.status === "expired") {
+      dot.className = "dot err";
+      errorBox.textContent = "This file has expired. Run the link again.";
+      errorBox.classList.add("visible");
+      submitBtn.disabled = false;
+    }
+
+    if (job.status === "done" && job.download_url) {
+      dot.className = "dot ok";
+      barFill.style.width = "100%";
+      statProgress.textContent = "100%";
+      const size = job.output_size ? " (" + formatBytes(job.output_size) + ")" : "";
+      downloadLabel.textContent = "Download " + (job.output_name || "file") + size;
+      downloadLink.href = job.download_url;
+      downloadLink.setAttribute("download", job.output_name || "");
+      downloadBox.classList.add("visible");
+      submitBtn.disabled = false;
+    }
+
+    if (TERMINAL.has(job.status)) {
+      stopTracking();
+      loadMe();
+      loadHistory();
+    }
+  }
+
+  function poll(jobId) {
+    stopTracking();
+    pollTimer = setInterval(async function () {
+      const result = await api("/v1/jobs/" + jobId);
+      if (result.ok && result.body) render(result.body);
+    }, 1200);
+  }
+
+  function track(jobId) {
+    stopTracking();
+    if (typeof EventSource === "undefined") { poll(jobId); return; }
+    eventSource = new EventSource("/v1/jobs/" + jobId + "/events");
+    eventSource.onmessage = function (event) {
+      try { render(JSON.parse(event.data)); } catch (e) { /* ignore malformed frame */ }
+    };
+    eventSource.onerror = function () {
+      if (eventSource) { eventSource.close(); eventSource = null; }
+      poll(jobId);
+    };
+  }
+
+  async function agentApi(path, options, timeoutMs) {
+    const controller = new AbortController();
+    const timer = setTimeout(function () { controller.abort(); }, timeoutMs || 3000);
+    try {
+      const response = await fetch(AGENT_BASE + path, Object.assign({}, options || {}, { signal: controller.signal }));
+      let body = null;
+      try { body = await response.json(); } catch (e) { /* empty body */ }
+      return { ok: response.ok, status: response.status, body: body };
+    } catch (error) {
+      return { ok: false, status: 0, body: null, network: true };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function updateAgentPill(online) {
+    agentPill.hidden = false;
+    agentPill.className = "app-pill " + (online ? "online" : "offline");
+    agentPill.textContent = online ? "Shorekeep app · connected" : "Shorekeep app · not running";
+    agentPill.title = online
+      ? "Downloads run on this device. Click for details."
+      : "Click to see the one-time setup steps.";
+  }
+
+  function renderBrowsers(browsers) {
+    browserList.textContent = "";
+    (browsers || []).forEach(function (browser) {
+      const span = document.createElement("span");
+      span.className = "browser" + (browser.present ? " yes" : "");
+      span.textContent = browser.label + (browser.present ? " · detected" : " · not found");
+      if (browser.present && browser.note) span.title = browser.note;
+      browserList.appendChild(span);
+    });
+  }
+
+  function showAppPanel() { appPanel.classList.add("visible"); }
+  function hideAppPanel() { appPanel.classList.remove("visible"); }
+
+  async function checkAgent(showPanel) {
+    const result = await agentApi("/health", {}, 2500);
+    if (result.ok && result.body && result.body.ok) {
+      agent = result.body;
+      updateAgentPill(true);
+      agentState.textContent = "Shorekeep app connected. Downloads save to " + (agent.download_dir || "your Downloads folder") + ".";
+      renderBrowsers(agent.browsers);
+      if (!showPanel) hideAppPanel();
+      return agent;
+    }
+    agent = null;
+    updateAgentPill(false);
+    agentState.textContent = "The Shorekeep app is not running yet. One-time setup:";
+    if (showPanel) showAppPanel();
+    return null;
+  }
+
+  function newJobId() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return window.crypto.randomUUID().replace(/-/g, "");
+    }
+    return "job" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  }
+
+  function agentErrorText(result) {
+    const detail = result.body && result.body.detail;
+    return typeof detail === "string" ? detail : "The Shorekeep app could not start this download.";
+  }
+
+  function trackAgent(jobId, key) {
+    stopTracking();
+    let misses = 0;
+    let lastStatus = null;
+    pollTimer = setInterval(async function () {
+      const result = await agentApi(
+        "/v1/jobs/" + jobId,
+        { headers: { "X-Agent-Key": key } },
+        5000
+      );
+      if (result.ok && result.body) {
+        misses = 0;
+        render(result.body);
+        const status = result.body.status;
+        if ((status === "done" || status === "failed") && lastStatus !== status) {
+          lastStatus = status;
+          setTimeout(loadMe, 1200);
+        }
+        return;
+      }
+      misses += 1;
+      if (misses >= 20) {
+        stopTracking();
+        dot.className = "dot err";
+        errorBox.textContent = "The Shorekeep app did not pick up this download. Follow the one-time setup below, then try again.";
+        errorBox.classList.add("visible");
+        showAppPanel();
+        submitBtn.disabled = false;
+        appSubmit.disabled = false;
+      }
+    }, 900);
+  }
+
+  function openDeepLink(key, url, jobId) {
+    agentKey = key;
+    stageBadge.textContent = "Opening Shorekeep app";
+    dot.className = "dot active";
+    titleEl.textContent = "Waiting for the Shorekeep app…";
+    const link = "shorekeep://run?pair=" + encodeURIComponent(key) +
+      "&url=" + encodeURIComponent(url) +
+      "&preset=" + encodeURIComponent(preset) +
+      "&job=" + encodeURIComponent(jobId);
+    try { window.location.href = link; } catch (e) { /* custom schemes may be blocked */ }
+
+    const deadline = Date.now() + 20000;
+    agentWaitTimer = setInterval(async function () {
+      const current = await checkAgent(false);
+      if (current) {
+        clearInterval(agentWaitTimer);
+        agentWaitTimer = null;
+        trackAgent(jobId, key);
+      } else if (Date.now() > deadline) {
+        clearInterval(agentWaitTimer);
+        agentWaitTimer = null;
+        dot.className = "dot err";
+        errorBox.textContent = "The Shorekeep app is not installed or did not start. Follow the one-time setup below, then try again.";
+        errorBox.classList.add("visible");
+        showAppPanel();
+        submitBtn.disabled = false;
+        appSubmit.disabled = false;
+      }
+    }, 800);
+  }
+
+  async function submitViaApp() {
+    const url = urlInput.value.trim();
+    if (!url) { urlInput.focus(); return; }
+    if (!me) { openAuth("login"); return; }
+
+    stopTracking();
+    resetJobView();
+    jobBox.classList.add("visible");
+    titleEl.textContent = "Preparing…";
+    stageBadge.textContent = "Pairing with Shorekeep app";
+    submitBtn.disabled = true;
+    appSubmit.disabled = true;
+
+    const pair = await api("/v1/agent/pair", { method: "POST" });
+    if (!pair.ok || !pair.body) {
+      if (pair.status === 401) openAuth("login");
+      dot.className = "dot err";
+      errorBox.textContent = (pair.body && pair.body.detail) || "Could not prepare the desktop download.";
+      errorBox.classList.add("visible");
+      submitBtn.disabled = false;
+      appSubmit.disabled = false;
+      return;
+    }
+
+    const key = pair.body.pair_token;
+    const jobId = newJobId();
+    agentKey = key;
+    const run = await agentApi("/v1/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Agent-Key": key },
+      body: JSON.stringify({ url: url, preset: preset, job_id: jobId })
+    }, 20000);
+
+    if (run.ok && run.body) {
+      hideAppPanel();
+      updateAgentPill(true);
+      render(run.body);
+      trackAgent(jobId, key);
+      return;
+    }
+
+    if (run.status && run.status !== 0) {
+      dot.className = "dot err";
+      errorBox.textContent = agentErrorText(run);
+      errorBox.classList.add("visible");
+      submitBtn.disabled = false;
+      appSubmit.disabled = false;
+      return;
+    }
+
+    openDeepLink(key, url, jobId);
+  }
+
+  appSubmit.addEventListener("click", submitViaApp);
+  agentPill.addEventListener("click", function () { checkAgent(true); });
+  agentRecheck.addEventListener("click", function () { checkAgent(true); });
+
+  function presetAllowed(name) {
+    if (!me && config && config.limits && config.limits.anon_max_preset) {
+      const cap = config.limits.anon_max_preset;
+      if (name === "audio") return true;
+      return (PRESET_RANK[name] || 99) <= (PRESET_RANK[cap] || 4);
+    }
+    return true;
+  }
+
+  function applyPresetGating() {
+    let changed = false;
+    chips.forEach(function (chip) {
+      const allowed = presetAllowed(chip.dataset.preset);
+      chip.disabled = !allowed;
+      chip.title = allowed ? "" : "Sign in free to unlock " + chip.textContent;
+      if (!allowed && chip.getAttribute("aria-pressed") === "true") changed = true;
+    });
+    if (changed) {
+      const cap = config && config.limits ? config.limits.anon_max_preset : null;
+      preset = cap && PRESET_RANK[cap] ? cap : "480p";
+      chips.forEach(function (c) {
+        c.setAttribute("aria-pressed", String(c.dataset.preset === preset && !c.disabled));
+      });
+    }
+  }
+
+  function renderAccount() {
+    const signedIn = me && me.user;
+    accountWho.hidden = !signedIn;
+    accountQuota.hidden = !signedIn;
+    signoutBtn.hidden = !signedIn;
+    authOpen.hidden = !!signedIn;
+    cookiesBox.hidden = !signedIn;
+    if (signedIn) {
+      accountWho.textContent = me.user.email;
+      const u = me.usage;
+      let text = me.user.plan + " · " + u.used_this_hour + "/" + u.limit_per_hour + " this hour";
+      if (u.max_preset) text += " · up to " + u.max_preset;
+      accountQuota.textContent = text;
+      accountQuota.title = u.active_jobs + " of " + u.max_active_jobs + " concurrent job slots in use";
+    } else if (config && config.limits && config.limits.anon_max_preset) {
+      accountQuota.hidden = false;
+      accountQuota.textContent = "Guest · up to " + config.limits.anon_max_preset;
+    }
+    applyPresetGating();
+  }
+
+  async function loadMe() {
+    const result = await api("/v1/auth/me");
+    me = result.ok && result.body ? result.body : null;
+    renderAccount();
+    if (me) loadHistory(); else hideHistory();
+    return me;
+  }
+
+  function hideHistory() {
+    historyBox.classList.remove("visible");
+    historyList.textContent = "";
+  }
+
+  async function loadHistory() {
+    if (!me) return;
+    const result = await api("/v1/jobs?limit=8");
+    let jobs = result.ok && Array.isArray(result.body) ? result.body.slice() : [];
+    if (agentKey) {
+      const local = await agentApi("/v1/jobs?limit=8", { headers: { "X-Agent-Key": agentKey } }, 4000);
+      if (local.ok && Array.isArray(local.body)) {
+        const seen = new Set(jobs.map(function (job) { return job.id; }));
+        jobs = jobs.concat(local.body.filter(function (job) { return !seen.has(job.id); }));
+        jobs.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+      } else if (local.status === 401) {
+        agentKey = null;
+      }
+    }
+    jobs = jobs.slice(0, 8);
+    historyList.textContent = "";
+    if (!jobs.length) {
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = "No downloads yet.";
+      historyList.appendChild(li);
+    }
+    jobs.forEach(function (job) {
+      const li = document.createElement("li");
+      const name = document.createElement("span");
+      name.className = "hname";
+      name.textContent = job.title || job.output_name || job.url;
+      const status = document.createElement("span");
+      status.className = "hstatus " + job.status;
+      status.textContent = STAGE_LABELS[job.status] || job.status;
+      li.appendChild(name);
+      if (job.client === "desktop") {
+        const device = document.createElement("span");
+        device.className = "hdevice";
+        device.textContent = "on device";
+        device.title = job.saved_to || "Saved by the Shorekeep app";
+        li.appendChild(device);
+      }
+      li.appendChild(status);
+      if (job.status === "done" && job.download_url) {
+        const link = document.createElement("a");
+        link.href = job.download_url;
+        link.textContent = "Download";
+        link.setAttribute("download", job.output_name || "");
+        if (job.client === "desktop") link.target = "_blank";
+        li.appendChild(link);
+      }
+      historyList.appendChild(li);
+    });
+    historyBox.classList.add("visible");
+  }
+
+  function openAuth(mode) {
+    authMode = mode === "register" ? "register" : "login";
+    const registering = authMode === "register";
+    authTitle.textContent = registering ? "Create your free account" : "Sign in";
+    authSubmit.textContent = registering ? "Create account" : "Sign in";
+    authSwitch.textContent = registering ? "Already have an account? Sign in" : "No account? Create one free";
+    authPassword.autocomplete = registering ? "new-password" : "current-password";
+    authError.classList.remove("visible");
+    authError.textContent = "";
+    authForm.reset();
+    if (typeof authDialog.showModal === "function") authDialog.showModal();
+    else authDialog.setAttribute("open", "");
+    authEmail.focus();
+  }
+
+  function closeAuth() {
+    if (typeof authDialog.close === "function") authDialog.close();
+    else authDialog.removeAttribute("open");
+  }
+
+  authOpen.addEventListener("click", function () { openAuth("login"); });
+  authClose.addEventListener("click", closeAuth);
+  authSwitch.addEventListener("click", function (event) {
+    event.preventDefault();
+    openAuth(authMode === "login" ? "register" : "login");
+  });
+
+  authForm.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    const email = authEmail.value.trim();
+    const password = authPassword.value;
+    if (!email || !password) {
+      authError.textContent = "Email and password are required.";
+      authError.classList.add("visible");
+      return;
+    }
+    authSubmit.disabled = true;
+    authError.classList.remove("visible");
+    try {
+      const result = await api("/v1/auth/" + authMode, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email, password: password })
+      });
+      if (!result.ok) {
+        const detail = result.body && result.body.detail;
+        throw new Error(typeof detail === "string" ? detail : "Could not complete sign-in.");
+      }
+      me = result.body;
+      agentKey = null;
+      closeAuth();
+      renderAccount();
+      loadHistory();
+    } catch (error) {
+      authError.textContent = error.message;
+      authError.classList.add("visible");
+    } finally {
+      authSubmit.disabled = false;
+    }
+  });
+
+  signoutBtn.addEventListener("click", async function () {
+    await api("/v1/auth/logout", { method: "POST" });
+    me = null;
+    agentKey = null;
+    hideHistory();
+    renderAccount();
+  });
+
+  cookiesFile.addEventListener("change", function () {
+    const file = cookiesFile.files && cookiesFile.files[0];
+    if (!file) return;
+    if (file.size > 256 * 1024) {
+      cookiesInput.value = "";
+      errorBox.textContent = "The cookies file is larger than 256 KB.";
+      errorBox.classList.add("visible");
+      return;
+    }
+    file.text().then(function (text) { cookiesInput.value = text; });
+  });
+
+  cookiesClear.addEventListener("click", function () {
+    cookiesInput.value = "";
+    cookiesFile.value = "";
+  });
+
+  async function loadConfig() {
+    const result = await api("/v1/config");
+    config = result.ok && result.body ? result.body : null;
+    if (config && config.turnstile && config.turnstile.enabled && config.turnstile.site_key) {
+      turnstileBox.hidden = false;
+      const script = document.createElement("script");
+      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js";
+      script.async = true;
+      script.defer = true;
+      script.onload = function () {
+        if (window.turnstile) {
+          window.turnstile.render("#turnstile", {
+            sitekey: config.turnstile.site_key,
+            theme: "dark"
+          });
+          turnstileReady = true;
+        }
+      };
+      document.head.appendChild(script);
+    }
+  }
+
+  function turnstileToken() {
+    if (!config || !config.turnstile || !config.turnstile.enabled) return null;
+    if (!turnstileReady || !window.turnstile) return null;
+    return window.turnstile.getResponse() || null;
+  }
+
+  function resetTurnstile() {
+    if (turnstileReady && window.turnstile) window.turnstile.reset();
+  }
+
+  form.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    const url = urlInput.value.trim();
+    if (!url) { urlInput.focus(); return; }
+
+    stopTracking();
+    resetJobView();
+    jobBox.classList.add("visible");
+    titleEl.textContent = "Preparing…";
+    stageBadge.textContent = "Queued";
+    submitBtn.disabled = true;
+
+    const payload = { url: url, preset: preset };
+    const cookiesText = cookiesInput.value.trim();
+    if (cookiesText) payload.cookies = cookiesText;
+    const token = turnstileToken();
+    if (token) payload.turnstile_token = token;
+    if (config && config.turnstile && config.turnstile.enabled && !token) {
+      dot.className = "dot err";
+      errorBox.textContent = "Complete the bot check first.";
+      errorBox.classList.add("visible");
+      submitBtn.disabled = false;
+      return;
+    }
+
+    try {
+      const result = await api("/v1/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!result.ok) {
+        if (result.status === 401) openAuth("login");
+        const detail = result.body && result.body.detail;
+        throw new Error(typeof detail === "string" ? detail : "Could not create the job.");
+      }
+      cookiesInput.value = "";
+      cookiesFile.value = "";
+      resetTurnstile();
+      render(result.body);
+      track(result.body.id);
+      loadMe();
+    } catch (error) {
+      dot.className = "dot err";
+      errorBox.textContent = error.message;
+      errorBox.classList.add("visible");
+      submitBtn.disabled = false;
+    }
+  });
+
+  async function boot() {
+    await loadConfig();
+    await loadMe();
+    applyPresetGating();
+    checkAgent(false);
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>

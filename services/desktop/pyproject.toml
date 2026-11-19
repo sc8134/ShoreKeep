@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shorekeep-desktop"
+version = "0.2.0"
+description = "Shorekeep desktop companion: local downloads and automatic browser cookies for the web app"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "yt-dlp>=2025.1.15",
+    "mydl-cli>=0.1.0",
+    "imageio-ffmpeg>=0.5",
+    "cryptography>=42",
+]
+
+[project.optional-dependencies]
+tray = ["pystray>=0.19", "pillow>=10"]
+build = ["pyinstaller>=6.10", "pystray>=0.19", "pillow>=10"]
+
+[project.scripts]
+shorekeep-desktop = "mydl_desktop.agent:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mydl_desktop*"]
+
+[tool.setuptools.package-data]
+mydl_desktop = ["assets/*.png"]

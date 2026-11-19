@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "media-backend"
+version = "0.1.0"
+description = "Video/audio download platform backend: FastAPI API + hybrid extraction/transfer worker"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlmodel>=0.0.22",
+    "pydantic-settings>=2.4",
+    "yt-dlp>=2025.1.15",
+    "mydl-cli>=0.1.0",
+    "imageio-ffmpeg>=0.5",
+    "boto3>=1.35",
+    "cryptography>=42",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["backend*"]
+
+[tool.setuptools.package-data]
+backend = ["static/*"]

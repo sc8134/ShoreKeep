@@ -1,0 +1,191 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
+from sqlmodel import Session
+
+from ..auth import (
+    SESSION_COOKIE,
+    AuthError,
+    burn_password_check,
+    create_session,
+    get_user_by_email,
+    hash_password,
+    normalize_email,
+    purge_expired_sessions,
+    revoke_session,
+    validate_email,
+    validate_password,
+    verify_password,
+)
+from ..config import settings
+from ..db import get_session
+from ..models import User
+from ..plans import Usage, usage as plan_usage
+from ..ratelimit import SlidingWindowLimiter
+from .deps import client_ip, ensure_same_origin, optional_user, require_user
+
+router = APIRouter(prefix="/v1/auth", tags=["auth"])
+
+register_limiter = SlidingWindowLimiter(10, 15 * 60)
+login_limiter = SlidingWindowLimiter(20, 15 * 60)
+
+
+class Credentials(BaseModel):
+    email: str
+    password: str
+
+
+class UserRead(BaseModel):
+    id: str
+    email: str
+    plan: str
+    created_at: datetime
+
+    @classmethod
+    def from_user(cls, user: User) -> "UserRead":
+        return cls(id=user.id, email=user.email, plan=user.plan, created_at=user.created_at)
+
+
+class UsageRead(BaseModel):
+    used_this_hour: int
+    limit_per_hour: int
+    active_jobs: int
+    max_active_jobs: int
+    max_preset: str | None
+    presets: list[str]
+
+
+class MeRead(BaseModel):
+    user: UserRead
+    usage: UsageRead
+
+
+def usage_read(usage: Usage) -> UsageRead:
+    return UsageRead(
+        used_this_hour=usage.used_this_hour,
+        limit_per_hour=usage.limit_per_hour,
+        active_jobs=usage.active_jobs,
+        max_active_jobs=usage.max_active_jobs,
+        max_preset=usage.max_preset,
+        presets=list(usage.presets),
+    )
+
+
+def _set_session_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        max_age=settings.session_days * 86400,
+        httponly=True,
+        samesite="lax",
+        secure=settings.cookie_secure,
+        path="/",
+    )
+
+
+def _rate_limit(limiter: SlidingWindowLimiter, key: str, message: str) -> None:
+    allowed, retry_after = limiter.allow(key)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=message,
+            headers={"Retry-After": str(retry_after)},
+        )
+
+
+@router.post("/register", response_model=MeRead, status_code=201)
+def register(
+    payload: Credentials,
+    request: Request,
+    response: Response,
+    session: Session = Depends(get_session),
+) -> MeRead:
+    ip = client_ip(request)
+    _rate_limit(register_limiter, ip, "Too many sign-up attempts. Try again later.")
+
+    email = normalize_email(payload.email)
+    try:
+        validate_email(email)
+        validate_password(payload.password)
+    except AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if get_user_by_email(session, email) is not None:
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+
+    user = User(email=email, password_hash=hash_password(payload.password))
+    session.add(user)
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="An account with this email already exists") from exc
+    session.refresh(user)
+
+    purge_expired_sessions(session)
+    token = create_session(session, user, ip, request.headers.get("user-agent"))
+    _set_session_cookie(response, token)
+    return MeRead(user=UserRead.from_user(user), usage=usage_read(plan_usage(session, user, None)))
+
+
+@router.post("/login", response_model=MeRead)
+def login(
+    payload: Credentials,
+    request: Request,
+    response: Response,
+    session: Session = Depends(get_session),
+) -> MeRead:
+    ip = client_ip(request)
+    _rate_limit(login_limiter, ip, "Too many sign-in attempts. Try again later.")
+
+    email = normalize_email(payload.email)
+    user = get_user_by_email(session, email)
+    if user is None:
+        burn_password_check(payload.password)
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    if user.status != "active" or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    purge_expired_sessions(session)
+    token = create_session(session, user, ip, request.headers.get("user-agent"))
+    _set_session_cookie(response, token)
+    return MeRead(user=UserRead.from_user(user), usage=usage_read(plan_usage(session, user, None)))
+
+
+@router.post("/logout", status_code=204)
+def logout(
+    request: Request,
+    response: Response,
+    user: User | None = Depends(optional_user),
+    session: Session = Depends(get_session),
+) -> None:
+    ensure_same_origin(request)
+    revoke_session(session, getattr(request.state, "session_token", None))
+    response.delete_cookie(SESSION_COOKIE, path="/")
+
+
+@router.get("/me", response_model=MeRead)
+def me(
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+) -> MeRead:
+    return MeRead(user=UserRead.from_user(user), usage=usage_read(plan_usage(session, user, None)))
+
+
+def config_payload() -> dict[str, Any]:
+    return {
+        "turnstile": {
+            "enabled": bool(settings.turnstile_enabled and settings.turnstile_secret),
+            "site_key": settings.turnstile_site_key,
+        },
+        "limits": {
+            "anon_max_preset": settings.anon_max_preset or None,
+            "max_filesize_mb": settings.max_filesize_mb,
+            "retention_seconds": settings.retention_seconds,
+        },
+    }
