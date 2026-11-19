@@ -71,6 +71,11 @@ def _acquire_single_instance() -> bool:
 
 
 def main(config: AgentConfig) -> int:
+    logging.basicConfig(
+        level=logging.INFO,
+        handlers=[logging.FileHandler(config_dir() / "window.log", encoding="utf-8")],
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     if not _acquire_single_instance():
         return 0
     if not webapp.wait_ready(config, timeout=20.0):
@@ -79,14 +84,22 @@ def main(config: AgentConfig) -> int:
         webbrowser.open(config.server_base)
         return 0
 
-    import webview
+    try:
+        import webview
 
-    webview.create_window(
-        WINDOW_TITLE,
-        config.server_base,
-        width=1280,
-        height=860,
-        min_size=(900, 600),
-    )
-    webview.start(gui="edgechromium")
+        # WebView2 cancels downloads by default, which broke the "Download" button
+        # in the finished-job popup even though it works in a regular browser.
+        webview.settings["ALLOW_DOWNLOADS"] = True
+
+        webview.create_window(
+            WINDOW_TITLE,
+            config.server_base,
+            width=1280,
+            height=860,
+            min_size=(900, 600),
+        )
+        webview.start(gui="edgechromium")
+    except Exception:
+        logger.exception("the native window failed to start")
+        return 1
     return 0

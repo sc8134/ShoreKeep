@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 import webbrowser
 
 from .config import AgentConfig
@@ -32,6 +33,21 @@ def _open_ui(config: AgentConfig) -> None:
         logger.exception("could not open %s", config.server_base)
 
 
+def _open_window(config: AgentConfig):
+    from . import window
+
+    child = window.spawn(config)
+    if child is None:
+        return None
+    # WebView2 can fail to initialize while a previous instance is still shutting
+    # down (for example right after an installer upgrade); retry once.
+    time.sleep(2.0)
+    if child.poll() is not None:
+        time.sleep(2.0)
+        child = window.spawn(config)
+    return child
+
+
 def main(argv: list[str] | None = None) -> int:
     from .agent import _setup_logging, handle_deep_link
 
@@ -53,11 +69,11 @@ def main(argv: list[str] | None = None) -> int:
     _setup_logging()
     try:
         if not args:
-            from . import webapp, window
+            from . import webapp
             from .tray import acquire_single_instance, run_tray
 
             if not acquire_single_instance():
-                if not minimized and window.spawn(config) is None:
+                if not minimized and _open_window(config) is None:
                     _open_ui(config)
                 return 0
             web_child = webapp.ensure_webapp(config)
@@ -67,7 +83,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             window_child = None
             if not minimized:
-                window_child = window.spawn(config)
+                window_child = _open_window(config)
                 if window_child is None:
                     _open_ui(config)
             return run_tray(config, web_child=web_child, window_child=window_child)
