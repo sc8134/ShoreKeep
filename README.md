@@ -9,7 +9,7 @@ Shorekeep is a video/audio download platform with a hybrid engine. The product i
 - **ffmpeg** muxes/remuxes (`-c copy` where possible) and extracts MP3 audio
 - **FastAPI + SQLite** API and single-page UI, with SSE progress and a DB-polling worker
 
-Status: **Phase 2 + desktop companion**. Single jobs, presets, progress streaming, auto-expiry, email/password accounts, free-tier limits, optional Turnstile, encrypted per-job cookies, and an optional desktop app that downloads locally with automatic browser cookies and server-enforced metering. Billing and Postgres/Redis scaling come next.
+Status: **Phase 4**. Single jobs and playlists, presets, progress streaming, auto-expiry, email/password accounts, free-tier limits, optional Turnstile, encrypted per-job cookies, VTT subtitles and chapter metadata, structured error codes, and an optional desktop app that downloads locally with automatic browser cookies and server-enforced metering. Billing and Postgres/Redis scaling come next.
 
 ## Architecture
 
@@ -50,6 +50,21 @@ Routing is decided per stream in `engine/extract.py` (`build_plan`), not per sit
 ### Signed-URL refresh
 
 Extractor-provided URLs are IP-bound and short-lived. The pipeline retries once on 401/403/410: it re-runs extraction, rebuilds the plan, and resumes the transfer in the same worker (`engine/pipeline.py::_download_with_refresh`). Extraction and transfer must stay on the same worker. Do not split them across machines.
+
+## Playlists, subtitles, and chapters
+
+A playlist URL is still **one job**. The worker enumerates entries with a flat extraction, downloads each entry with the normal plan/transfer path, and stores the result as a single ZIP (`01 - Title.mp4`, `02 - Title.mp4`, ...). Items that fail are skipped and listed in `_playlist.txt` inside the ZIP; the job only fails when nothing could be saved. Playlists are capped by `PLAYLIST_MAX_ITEMS` (default 20) and `PLAYLIST_MAX_TOTAL_MB` (default 4096). Channels and nested playlists are not expanded; single-item playlists behave like a normal video.
+
+`subtitles: true` on `POST /v1/jobs` (or the **Subtitles + chapters** chip in the UI) adds two optional extras:
+
+- a VTT sidecar, preferring human captions over automatic ones and English over other languages, downloaded without failing the media job if it is missing; HLS subtitle playlists (segmented WebVTT, e.g. TED) are merged into one file;
+- chapter markers from the extractor, stored as JSON on the job and rendered as a timestamp list in the UI.
+
+The API exposes them at `GET /v1/jobs/{id}/subtitles` (mirroring `/file`, including R2 presigning). In playlist mode subtitles and a chapters text file are placed next to each video inside the ZIP.
+
+## Error taxonomy
+
+Failures carry a stable `error_code` alongside the human message (`engine/errors.py`): `bot_check`, `age_restricted`, `login_required`, `cookies_rejected`, `cookies_unreadable`, `private_video`, `drm`, `live_stream`, `unsupported_url`, `geo_blocked`, `not_found`, `network`, `timeout`, `size_limit`, `playlist_empty`, `ffmpeg_missing`, `storage_error`, `unsafe_url`, and `unknown`. The API returns `retryable` so the UI can offer a **Try again** button only when another attempt can plausibly succeed.
 
 ## Plans and limits
 
@@ -225,6 +240,9 @@ See `.env.example`. Notable knobs:
 - `DATA_DIR`: SQLite DB, media, and per-job work dirs
 - `RETENTION_SECONDS`: auto-delete finished files and mark jobs `expired` (default 1 h)
 - `MAX_FILESIZE_MB`: enforced twice: format selection refuses larger estimates, and the transfer aborts if actual bytes exceed it
+- `PLAYLIST_MAX_ITEMS`: entries expanded per playlist job (default 20)
+- `PLAYLIST_MAX_TOTAL_MB`: total uncompressed size of one playlist ZIP (default 4096)
+- `SUBTITLE_MAX_KB`: cap for a downloaded VTT sidecar (default 2048)
 - `JOB_TIMEOUT_SECONDS`: hard wall-clock limit per job (default 30 min); stale jobs from crashed workers are reaped after the same window
 - `MAX_QUEUE_DEPTH`: reject new jobs with HTTP 429 when this many are queued/running
 - `ANON_JOBS_PER_IP_HOUR`, `FREE_JOBS_PER_USER_HOUR`, `PRO_JOBS_PER_USER_HOUR`
@@ -244,7 +262,9 @@ See `.env.example`. Notable knobs:
 .venv/Scripts/python.exe -m pytest services/backend/tests -q
 ```
 
-89 tests cover format planning/routing, size caps, DRM/playlist rejection, URL safety (SSRF), rate limiting, auth/sessions, quotas, job ownership, CSRF origin checks, Turnstile gating, cookie parsing/encryption, agent pairing, job flows, shared cloud/desktop metering (idempotent reserves, concurrency, stale reservations, offline replay), and the desktop agent (host guard, local pairing, plan gating, SSRF). Desktop tests are skipped automatically if the `mydl_desktop` package is not installed. `conftest.py` points `DATA_DIR` at a temp directory so tests never touch your dev database.
+118 tests cover format planning/routing, size caps, DRM/playlist rejection, playlist ZIP building, subtitle selection, HLS subtitle merging, chapter parsing, the error taxonomy, URL safety (SSRF), rate limiting, auth/sessions, quotas, job ownership, CSRF origin checks, Turnstile gating, cookie parsing/encryption, agent pairing, job flows, shared cloud/desktop metering (idempotent reserves, concurrency, stale reservations, offline replay), and the desktop agent (host guard, local pairing, plan gating, SSRF). Desktop tests are skipped automatically if the `mydl_desktop` package is not installed. `conftest.py` points `DATA_DIR` at a temp directory so tests never touch your dev database.
+
+CI runs the same suite on every push and pull request (`.github/workflows/ci.yml`). A scheduled workflow (`.github/workflows/ytdlp-update.yml`) checks PyPI every Monday, bumps the `yt-dlp` floor in both packages, runs the suite against that exact release, and opens a pull request when a newer version exists.
 
 ## Deploy
 
@@ -262,11 +282,12 @@ Both containers share a `media_data` volume (SQLite + files). For multi-host sca
 - [x] Phase 2: accounts, free-tier limits, Turnstile, BYO-cookies (encrypted, per-job)
 - [x] Phase 2.5: desktop companion: local downloads, automatic browser cookies, `shorekeep://` pairing, shared server-side metering
 - [ ] Phase 3: billing (freemium tiers), priority queue, R2 in production
-- [ ] Phase 4: playlists, subtitles/chapters, error taxonomy, weekly yt-dlp updates in CI
+- [x] Phase 4: playlists, subtitles/chapters, error taxonomy, weekly yt-dlp updates in CI
 
 ## Known limitations
 
-- No playlists, live streams, or DRM content (explicitly rejected)
+- Playlists are exported as one ZIP (no per-item download links), capped by `PLAYLIST_MAX_ITEMS`; channels and nested lists are not expanded. Live streams and DRM content are still rejected
+- Subtitles are VTT sidecars only; other caption formats are skipped, and there is no embedding/translation yet
 - One job per worker at a time; add workers for concurrency
 - SQLite only; SSE polls the DB every 500 ms (off the event loop)
 - No email verification, password reset, or OAuth yet; a verification flow is needed before a public launch

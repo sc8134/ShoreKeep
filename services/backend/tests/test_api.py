@@ -220,3 +220,21 @@ def test_public_config(client):
     assert body["turnstile"]["enabled"] is False
     assert body["limits"]["anon_max_preset"] == "720p"
     assert body["limits"]["retention_seconds"] > 0
+
+
+def test_job_records_subtitle_preference(client):
+    created = _create_job(client, "720p", subtitles=True)
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["subtitle_url"] is None
+    assert body["subtitle_name"] is None
+    assert body["chapters"] is None
+    assert body["playlist_count"] is None
+    assert body["retryable"] is False
+
+    with Session(engine) as session:
+        job = session.get(Job, body["id"])
+        assert job is not None
+        assert job.want_subtitles is True
+
+    assert client.get(f"/v1/jobs/{body['id']}/subtitles").status_code == 404

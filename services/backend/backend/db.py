@@ -26,6 +26,14 @@ _JOB_COLUMNS = {
     "user_id": "VARCHAR",
     "client_hash": "VARCHAR",
     "cookies_enc": "TEXT",
+    "want_subtitles": "BOOLEAN DEFAULT 0",
+    "subtitle_name": "VARCHAR",
+    "subtitle_path": "TEXT",
+    "subtitle_lang": "VARCHAR",
+    "chapters": "TEXT",
+    "playlist_index": "INTEGER",
+    "playlist_count": "INTEGER",
+    "error_code": "VARCHAR",
 }
 
 

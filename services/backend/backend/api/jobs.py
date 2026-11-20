@@ -17,6 +17,7 @@ from ..auth import hash_ip
 from ..config import settings
 from ..cookies import CookieError, encrypt_cookies, validate_cookies
 from ..db import engine, get_session
+from ..engine.errors import retryable_code
 from ..engine.storage import storage
 from ..models import ACTIVE_STATUSES, TERMINAL_STATUSES, Job, User
 from ..plans import plan_for, preset_allowed, usage as plan_usage
@@ -38,6 +39,7 @@ user_limiter = SlidingWindowLimiter(
 class JobCreate(BaseModel):
     url: str = Field(min_length=10, max_length=2048)
     preset: str = "best"
+    subtitles: bool = False
     cookies: str | None = None
     turnstile_token: str | None = None
 
@@ -60,12 +62,31 @@ class JobRead(BaseModel):
     output_name: str | None
     output_size: int | None
     mime: str | None
+    subtitle_name: str | None
+    subtitle_lang: str | None
+    chapters: list[dict] | None
+    playlist_index: int | None
+    playlist_count: int | None
     error: str | None
+    error_code: str | None
+    retryable: bool
     created_at: datetime
     download_url: str | None
+    subtitle_url: str | None
+
+
+def _chapters(job: Job) -> list[dict] | None:
+    if not job.chapters:
+        return None
+    try:
+        value = json.loads(job.chapters)
+    except (TypeError, ValueError):
+        return None
+    return value if isinstance(value, list) else None
 
 
 def _to_read(job: Job) -> JobRead:
+    done = job.status == "done"
     return JobRead(
         id=job.id,
         url=job.url,
@@ -84,9 +105,19 @@ def _to_read(job: Job) -> JobRead:
         output_name=job.output_name,
         output_size=job.output_size,
         mime=job.mime,
+        subtitle_name=job.subtitle_name,
+        subtitle_lang=job.subtitle_lang,
+        chapters=_chapters(job),
+        playlist_index=job.playlist_index,
+        playlist_count=job.playlist_count,
         error=job.error,
+        error_code=job.error_code,
+        retryable=job.status == "failed" and retryable_code(job.error_code),
         created_at=job.created_at,
-        download_url=f"/v1/jobs/{job.id}/file" if job.status == "done" else None,
+        download_url=f"/v1/jobs/{job.id}/file" if done else None,
+        subtitle_url=(
+            f"/v1/jobs/{job.id}/subtitles" if done and job.subtitle_path else None
+        ),
     )
 
 
@@ -212,6 +243,7 @@ def create_job(
         id=uuid.uuid4().hex,
         url=url,
         preset=payload.preset,
+        want_subtitles=payload.subtitles,
         user_id=user.id if user else None,
         client_hash=client_hash,
         cookies_enc=cookies_enc,
@@ -300,4 +332,30 @@ def download_file(
         path,
         media_type=job.mime or "application/octet-stream",
         filename=job.output_name or path.name,
+    )
+
+
+@router.get("/jobs/{job_id}/subtitles")
+def download_subtitles(
+    job_id: str,
+    user: User | None = Depends(optional_user),
+    session: Session = Depends(get_session),
+):
+    job = _get_visible_job(session, job_id, user)
+    if job.status == "expired":
+        raise HTTPException(status_code=410, detail="File has expired")
+    if job.status != "done" or not job.subtitle_path:
+        raise HTTPException(status_code=404, detail="Subtitles are not available")
+
+    presigned = storage.presign_sidecar(job)
+    if presigned:
+        return RedirectResponse(presigned)
+
+    path = Path(job.subtitle_path)
+    if not path.exists():
+        raise HTTPException(status_code=410, detail="Subtitles have expired")
+    return FileResponse(
+        path,
+        media_type="text/vtt",
+        filename=job.subtitle_name or path.name,
     )

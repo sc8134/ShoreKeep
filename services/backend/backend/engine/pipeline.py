@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import threading
@@ -13,12 +14,15 @@ from ..cookies import CookieError, apply_to_plan, decrypt_cookies, write_cookie_
 from ..db import engine
 from ..models import Job, utcnow
 from ..security import UnsafeURLError, assert_public_http_url
+from .errors import classify_error
 from .extract import build_plan, extract_info
+from .playlist import build_playlist_zip, entry_title, entry_url, is_playlist, playlist_entries
 from .remux import merge_streams, to_mp3
 from .router import direct_plan, is_direct_media_url
-from .storage import storage
+from .storage import safe_download_name, storage
+from .subs import chapters_from, chapters_text, fetch_subtitle
 from .transfer import download_stream_mydl, download_with_ytdlp, is_expired_error
-from .types import JobTimeout, MediaPlan, SizeLimitExceeded
+from .types import JobTimeout, MediaPlan, PlaylistEmpty, SizeLimitExceeded
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +70,17 @@ class Reporter:
             engine=plan.engine,
         )
 
+    def set_chapters(self, chapters: list[dict]) -> None:
+        self._write(force=True, chapters=json.dumps(chapters))
+
+    def set_subtitle(self, stored, lang: str) -> None:
+        self._write(
+            force=True,
+            subtitle_name=stored.name,
+            subtitle_path=stored.path,
+            subtitle_lang=lang,
+        )
+
     def download_progress(self, start: float, end: float):
         def callback(downloaded: int, total: int | None, speed: float, eta: float | None) -> None:
             self._enforce_limits(downloaded, total)
@@ -111,12 +126,13 @@ class Reporter:
             finished_at=utcnow(),
         )
 
-    def fail(self, message: str) -> None:
+    def fail(self, message: str, code: str = "unknown") -> None:
         self._write(
             force=True,
             status="failed",
             stage="failed",
             error=message,
+            error_code=code,
             speed_bps=0.0,
             eta_seconds=None,
             finished_at=utcnow(),
@@ -129,6 +145,7 @@ def run_job(job_id: str) -> None:
         if job is None:
             return
         url, preset, cookies_enc = job.url, job.preset, job.cookies_enc
+        want_subtitles = bool(job.want_subtitles)
 
     reporter = Reporter(job_id)
     work = settings.work_dir / job_id
@@ -143,15 +160,42 @@ def run_job(job_id: str) -> None:
             cookie_file = str(write_cookie_file(cookie_text, work / "cookies.txt"))
 
         reporter.stage("extracting", "extracting", 3)
+
         if is_direct_media_url(url):
             plan = direct_plan(url, preset)
+            info = None
         else:
-            plan = build_plan(
-                extract_info(url, cookiefile=cookie_file), preset, settings.max_filesize_bytes
+            info = extract_info(
+                url, cookiefile=cookie_file, playlist=True, limit=settings.playlist_max_items
             )
+            if is_playlist(info):
+                entries = playlist_entries(info, settings.playlist_max_items)
+                if len(entries) > 1:
+                    _run_playlist(
+                        job_id,
+                        info,
+                        entries,
+                        preset,
+                        want_subtitles,
+                        work,
+                        reporter,
+                        cookie_file,
+                        cookie_text,
+                    )
+                    return
+                if not entries:
+                    raise PlaylistEmpty("This playlist has no downloadable videos.")
+                info = extract_info(entry_url(entries[0]) or url, cookiefile=cookie_file)
+            plan = build_plan(info, preset, settings.max_filesize_bytes)
+
         if cookie_text:
             apply_to_plan(plan, cookie_text)
         reporter.set_meta(plan)
+
+        if want_subtitles and info is not None:
+            chapters = chapters_from(info)
+            if chapters:
+                reporter.set_chapters(chapters)
 
         reporter.stage("downloading", "downloading", 8)
         final = _download_with_refresh(plan, work, reporter, cookie_file, cookie_text)
@@ -160,20 +204,122 @@ def run_job(job_id: str) -> None:
             reporter.stage("processing", "processing", 90)
             final = to_mp3(final, work / "audio.mp3")
 
+        subtitle = fetch_subtitle(info, work) if want_subtitles and info is not None else None
+
         reporter.stage("uploading", "uploading", 95)
         stored = storage.save(final, job_id, plan.title)
+        if subtitle is not None:
+            path, lang = subtitle
+            try:
+                sidecar = storage.save_sidecar(path, job_id, plan.title, lang)
+                reporter.set_subtitle(sidecar, lang)
+            except Exception:
+                logger.exception("could not store subtitles for job %s", job_id)
         reporter.complete(stored)
     except UnsafeURLError as exc:
-        _safe_fail(reporter, str(exc))
+        _safe_fail(reporter, exc)
     except CookieError as exc:
-        _safe_fail(reporter, friendly_error(exc))
+        _safe_fail(reporter, exc)
     except Exception as exc:
         logger.exception("job %s failed", job_id)
-        _safe_fail(reporter, friendly_error(exc))
+        _safe_fail(reporter, exc)
     finally:
         if cookies_enc:
             _clear_cookies(job_id)
         shutil.rmtree(work, ignore_errors=True)
+
+
+def _run_playlist(
+    job_id: str,
+    info: dict,
+    entries: list[dict],
+    preset: str,
+    want_subtitles: bool,
+    work: Path,
+    reporter: Reporter,
+    cookie_file: str | None,
+    cookie_text: str | None,
+) -> None:
+    title = info.get("title") or "Playlist"
+    reporter.stage(
+        "downloading",
+        "downloading",
+        5,
+        title=title,
+        thumbnail=info.get("thumbnail"),
+        playlist_count=len(entries),
+        playlist_index=0,
+    )
+
+    def download(entry: dict, item_dir: Path, index: int, count: int) -> list[tuple[str, Path]]:
+        return _download_playlist_item(
+            entry,
+            item_dir,
+            index,
+            count,
+            preset,
+            want_subtitles,
+            reporter,
+            cookie_file,
+            cookie_text,
+        )
+
+    result = build_playlist_zip(
+        title=title,
+        entries=entries,
+        work=work,
+        max_total_bytes=settings.playlist_max_total_bytes,
+        download=download,
+    )
+    reporter.stage("uploading", "uploading", 95, playlist_index=result.saved)
+    stored = storage.save(result.path, job_id, title)
+    reporter.complete(stored)
+
+
+def _download_playlist_item(
+    entry: dict,
+    item_dir: Path,
+    index: int,
+    count: int,
+    preset: str,
+    want_subtitles: bool,
+    reporter: Reporter,
+    cookie_file: str | None,
+    cookie_text: str | None,
+) -> list[tuple[str, Path]]:
+    url = entry_url(entry)
+    if not url:
+        raise RuntimeError("This playlist item has no URL")
+    item_title = entry_title(entry, index)
+    start = 5 + (90 * index) / count
+    end = 5 + (90 * (index + 1)) / count
+    reporter.stage("downloading", "downloading", None, playlist_index=index + 1)
+
+    info: dict | None = None
+    if is_direct_media_url(url):
+        plan = direct_plan(url, preset)
+    else:
+        info = extract_info(url, cookiefile=cookie_file)
+        plan = build_plan(info, preset, settings.max_filesize_bytes)
+    if cookie_text:
+        apply_to_plan(plan, cookie_text)
+
+    final = _download_with_refresh(plan, item_dir, reporter, cookie_file, cookie_text, start, end)
+    if plan.preset == "audio" and final.suffix.lower() != ".mp3":
+        final = to_mp3(final, item_dir / "audio.mp3")
+
+    files = [(safe_download_name(plan.title, final.suffix.lstrip(".")), final)]
+    if want_subtitles and info is not None:
+        subtitle = fetch_subtitle(info, item_dir)
+        if subtitle is not None:
+            path, lang = subtitle
+            files.append((safe_download_name(f"{plan.title}.{lang}", "vtt"), path))
+        chapters = chapters_from(info)
+        if chapters:
+            chapters_path = item_dir / safe_download_name(f"{item_title} chapters", "txt")
+            chapters_path.write_text(chapters_text(chapters) + "\n", encoding="utf-8")
+            files.append((safe_download_name(f"{plan.title} chapters", "txt"), chapters_path))
+    return files
 
 
 def _clear_cookies(job_id: str) -> None:
@@ -188,9 +334,10 @@ def _clear_cookies(job_id: str) -> None:
         logger.exception("could not clear cookies for job %s", job_id)
 
 
-def _safe_fail(reporter: Reporter, message: str) -> None:
+def _safe_fail(reporter: Reporter, error: BaseException) -> None:
     try:
-        reporter.fail(message)
+        info = classify_error(error)
+        reporter.fail(info.message, code=info.code)
     except Exception:
         logger.exception("failed to mark job %s as failed", reporter.job_id)
 
@@ -201,9 +348,11 @@ def _download_with_refresh(
     reporter: Reporter,
     cookiefile: str | None = None,
     cookie_text: str | None = None,
+    start: float = 8,
+    end: float = 90,
 ) -> Path:
     try:
-        return _download_once(plan, work, reporter, cookiefile)
+        return _download_once(plan, work, reporter, cookiefile, start, end)
     except (SizeLimitExceeded, JobTimeout):
         raise
     except Exception as exc:
@@ -218,8 +367,8 @@ def _download_with_refresh(
         if cookie_text:
             apply_to_plan(refreshed, cookie_text)
         reporter.set_meta(refreshed)
-        reporter.stage("downloading", "downloading", 8)
-        return _download_once(refreshed, work, reporter, cookiefile)
+        reporter.stage("downloading", "downloading", start)
+        return _download_once(refreshed, work, reporter, cookiefile, start, end)
 
 
 def _download_once(
@@ -227,13 +376,15 @@ def _download_once(
     work: Path,
     reporter: Reporter,
     cookiefile: str | None = None,
+    start: float = 8,
+    end: float = 90,
 ) -> Path:
     if plan.engine == "ytdlp":
         return download_with_ytdlp(
             plan.webpage_url,
             plan.selector,
             work / "media",
-            reporter.download_progress(8, 90),
+            reporter.download_progress(start, end),
             cookiefile=cookiefile,
         )
 
@@ -241,41 +392,19 @@ def _download_once(
         stream = plan.video or plan.audio
         assert stream is not None
         dest = work / f"media.{stream.ext or 'bin'}"
-        return download_stream_mydl(stream, dest, reporter.download_progress(8, 88))
+        return download_stream_mydl(stream, dest, reporter.download_progress(start, end - 2))
 
     assert plan.video is not None and plan.audio is not None
+    mid = start + (end - start) * 0.55
     video_path = work / f"video.{plan.video.ext or 'bin'}"
     audio_path = work / f"audio.{plan.audio.ext or 'bin'}"
-    video = download_stream_mydl(plan.video, video_path, reporter.download_progress(8, 60))
-    audio = download_stream_mydl(plan.audio, audio_path, reporter.download_progress(60, 85))
+    video = download_stream_mydl(plan.video, video_path, reporter.download_progress(start, mid))
+    audio = download_stream_mydl(plan.audio, audio_path, reporter.download_progress(mid, end - 3))
 
-    reporter.stage("processing", "processing", 88)
+    reporter.stage("processing", "processing", end - 2)
     out = work / f"merged.{plan.ext}"
     return merge_streams(video, audio, out)
 
 
 def friendly_error(error: BaseException) -> str:
-    if isinstance(error, JobTimeout):
-        return str(error)
-    if isinstance(error, SizeLimitExceeded):
-        return str(error)
-    message = str(error).strip() or error.__class__.__name__
-    lowered = message.lower()
-    if "sign in to confirm" in lowered or "not a bot" in lowered:
-        return "The source is blocking automated access right now (bot check). Please retry later."
-    if "drm" in lowered:
-        return "DRM-protected content is not supported."
-    if "private video" in lowered:
-        return "This video is private."
-    if "unsupported url" in lowered:
-        return "This URL is not supported."
-    if "cookies could not be decrypted" in lowered:
-        return "Stored cookies could not be read. Re-submit the job with fresh cookies."
-    if "cookie" in lowered and any(
-        token in lowered
-        for token in ("expired", "invalid", "netscape", "rejected", "failed to load", "malformed")
-    ):
-        return "Your cookies were rejected or expired. Export a fresh cookies.txt and try again."
-    if any(token in lowered for token in ("login required", "log in", "sign in required", "authenticate")):
-        return "This site requires a login. Sign in here, add your own cookies.txt, and retry."
-    return message[-700:]
+    return classify_error(error).message

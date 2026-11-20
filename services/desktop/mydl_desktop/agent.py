@@ -117,6 +117,7 @@ def handle_deep_link(uri: str, config: AgentConfig) -> int:
     pair = (params.get("pair") or [""])[0]
     url = (params.get("url") or [""])[0]
     preset = (params.get("preset") or ["best"])[0]
+    subtitles = (params.get("subs") or ["0"])[0] in {"1", "true", "yes"}
     job_id = (params.get("job") or [None])[0]
     if not pair or not url:
         logger.error("deep link is missing pair or url: %s", uri)
@@ -126,7 +127,9 @@ def handle_deep_link(uri: str, config: AgentConfig) -> int:
         logger.error("desktop agent did not start; check %s", config.log_path)
         return 3
 
-    payload = json.dumps({"url": url, "preset": preset, "job_id": job_id}).encode("utf-8")
+    payload = json.dumps(
+        {"url": url, "preset": preset, "subtitles": subtitles, "job_id": job_id}
+    ).encode("utf-8")
     request = urllib.request.Request(
         f"{AGENT_BASE}/v1/run",
         data=payload,

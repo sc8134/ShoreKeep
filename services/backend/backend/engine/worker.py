@@ -58,6 +58,7 @@ def sweep_expired() -> None:
             job.status = "expired"
             job.stage = "expired"
             job.output_path = None
+            job.subtitle_path = None
             job.cookies_enc = None
             session.add(job)
         if jobs:
@@ -78,6 +79,7 @@ def reap_stale_jobs() -> None:
             job.status = "failed"
             job.stage = "failed"
             job.error = "Job timed out or the worker stopped. Please retry."
+            job.error_code = "timeout"
             job.finished_at = utcnow()
             job.speed_bps = 0.0
             job.eta_seconds = None

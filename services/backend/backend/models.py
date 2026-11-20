@@ -79,6 +79,7 @@ class Job(SQLModel, table=True):
     user_id: str | None = Field(default=None, index=True, foreign_key="user.id")
     client_hash: str | None = Field(default=None, index=True)
     cookies_enc: str | None = None
+    want_subtitles: bool = False
 
     status: str = "queued"
     stage: str = "queued"
@@ -98,7 +99,16 @@ class Job(SQLModel, table=True):
     output_size: int | None = None
     mime: str | None = None
 
+    subtitle_name: str | None = None
+    subtitle_path: str | None = None
+    subtitle_lang: str | None = None
+    chapters: str | None = None
+
+    playlist_index: int | None = None
+    playlist_count: int | None = None
+
     error: str | None = None
+    error_code: str | None = None
     worker_id: str | None = None
 
     created_at: datetime = Field(default_factory=utcnow, index=True)

@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     max_filesize_mb: int = 2048
     job_timeout_seconds: int = 1800
     max_queue_depth: int = 50
+    playlist_max_items: int = 20
+    playlist_max_total_mb: int = 4096
+    subtitle_max_kb: int = 2048
     mydl_connections: int = 8
     ffmpeg_bin: str = ""
     worker_poll_seconds: float = 1.0
@@ -62,6 +65,10 @@ class Settings(BaseSettings):
     @property
     def max_filesize_bytes(self) -> int:
         return self.max_filesize_mb * 1024 * 1024
+
+    @property
+    def playlist_max_total_bytes(self) -> int:
+        return self.playlist_max_total_mb * 1024 * 1024
 
 
 settings = Settings()

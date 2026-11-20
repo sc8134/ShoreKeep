@@ -1,0 +1,154 @@
+from __future__ import annotations
+
+import logging
+import shutil
+import zipfile
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable, Sequence
+
+from ..config import settings
+from .errors import classify_error
+from .types import JobTimeout, PlaylistEmpty, SizeLimitExceeded
+
+logger = logging.getLogger(__name__)
+
+EntryDownload = Callable[[dict, Path, int, int], Sequence[tuple[str, Path]]]
+
+
+def _unique_name(name: str, used: set[str]) -> str:
+    if name not in used:
+        used.add(name)
+        return name
+    path = Path(name)
+    stem, suffix = path.stem, path.suffix
+    counter = 2
+    while f"{stem} ({counter}){suffix}" in used:
+        counter += 1
+    final = f"{stem} ({counter}){suffix}"
+    used.add(final)
+    return final
+
+
+def is_playlist(info: dict) -> bool:
+    if info.get("_type") in {"playlist", "multi_video"}:
+        return True
+    return bool(info.get("entries"))
+
+
+def entry_url(entry: dict) -> str | None:
+    for key in ("url", "webpage_url"):
+        url = entry.get(key)
+        if isinstance(url, str) and url.startswith(("http://", "https://")):
+            return url
+    return None
+
+
+def entry_title(entry: dict, index: int) -> str:
+    title = entry.get("title") or entry.get("id")
+    return str(title)[:160] if title else f"Item {index + 1}"
+
+
+def playlist_entries(info: dict, limit: int) -> list[dict]:
+    """Flat entries only: channels and nested playlists are skipped, not expanded."""
+    entries: list[dict] = []
+    for entry in info.get("entries") or []:
+        if not entry:
+            continue
+        if entry.get("entries") or entry.get("_type") in {"playlist", "multi_video"}:
+            continue
+        if not entry_url(entry):
+            continue
+        entries.append(entry)
+        if limit > 0 and len(entries) >= limit:
+            break
+    return entries
+
+
+@dataclass
+class PlaylistResult:
+    path: Path
+    saved: int
+    skipped: list[tuple[int, str, str]] = field(default_factory=list)
+
+
+def build_playlist_zip(
+    *,
+    title: str,
+    entries: list[dict],
+    work: Path,
+    max_total_bytes: int,
+    download: EntryDownload,
+) -> PlaylistResult:
+    if not entries:
+        raise PlaylistEmpty("This playlist has no downloadable videos.")
+
+    zip_path = work / "playlist.zip"
+    skipped: list[tuple[int, str, str]] = []
+    first_error: BaseException | None = None
+    saved = 0
+    total = 0
+    count = len(entries)
+    used: set[str] = set()
+
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED) as archive:
+        for index, entry in enumerate(entries):
+            item_title = entry_title(entry, index)
+            item_dir = work / f"item-{index:02d}"
+            try:
+                files = list(download(entry, item_dir, index, count))
+                if not files:
+                    raise RuntimeError("No file was produced")
+            except JobTimeout:
+                raise
+            except Exception as exc:
+                logger.info("playlist item %d/%d failed: %s", index + 1, count, exc)
+                reason = classify_error(exc).message.replace("\n", " ")[:300]
+                skipped.append((index + 1, item_title, reason))
+                if first_error is None:
+                    first_error = exc
+                shutil.rmtree(item_dir, ignore_errors=True)
+                continue
+
+            written = 0
+            for name, path in files:
+                if not path.exists():
+                    continue
+                total += path.stat().st_size
+                if max_total_bytes and total > max_total_bytes:
+                    raise SizeLimitExceeded(
+                        f"The playlist is larger than the {settings.playlist_max_total_mb} MB limit"
+                    )
+                archive.write(path, _unique_name(f"{index + 1:02d} - {name}", used))
+                written += 1
+            if written == 0:
+                skipped.append((index + 1, item_title, "No file was produced"))
+                shutil.rmtree(item_dir, ignore_errors=True)
+                continue
+            saved += 1
+            shutil.rmtree(item_dir, ignore_errors=True)
+
+        if skipped:
+            archive.writestr("_playlist.txt", _manifest(title, count, saved, skipped))
+
+    if saved == 0:
+        if first_error is not None:
+            raise first_error
+        raise PlaylistEmpty("This playlist has no downloadable videos.")
+    return PlaylistResult(path=zip_path, saved=saved, skipped=skipped)
+
+
+def _manifest(
+    title: str, total: int, saved: int, skipped: list[tuple[int, str, str]]
+) -> str:
+    lines = [
+        "Shorekeep playlist export",
+        f"Playlist: {title}",
+        f"Saved {saved} of {total} videos.",
+        "",
+        "Skipped:",
+    ]
+    lines.extend(f"  {index}. {name} - {reason}" for index, name, reason in skipped)
+    lines.append("")
+    lines.append("Generated by Shorekeep.")
+    return "\n".join(lines)

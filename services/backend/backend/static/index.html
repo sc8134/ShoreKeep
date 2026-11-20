@@ -210,6 +210,7 @@
   }
   .ghost:hover { background: rgba(139, 152, 184, 0.2); }
   .presets { display: flex; gap: 8px; flex-wrap: wrap; }
+  .options { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .chip {
     padding: 9px 15px;
     border-radius: 999px;
@@ -298,6 +299,20 @@
     color: #fda4af; font-size: 13.5px; line-height: 1.5; word-break: break-word;
   }
   .error.visible { display: block; }
+  .error .retry { margin-top: 10px; display: inline-block; }
+  .error .retry[hidden] { display: none; }
+  .sidecar { margin-top: 10px; font-size: 13px; }
+  .sidecar[hidden] { display: none; }
+  .sidecar a { color: var(--accent-2); text-decoration: none; }
+  .sidecar a:hover { text-decoration: underline; }
+  .chapters { margin-top: 14px; font-size: 13px; color: var(--muted); }
+  .chapters[hidden] { display: none; }
+  .chapters summary { cursor: pointer; color: var(--text); font-size: 13.5px; }
+  .chapters ol { margin: 10px 0 0; padding-left: 20px; max-height: 220px; overflow: auto; line-height: 1.8; }
+  .chapters li span {
+    color: #5d6a88; font-family: ui-monospace, Consolas, monospace;
+    font-size: 12px; margin-right: 8px;
+  }
   .download { display: none; margin-top: 18px; }
   .download.visible { display: block; }
   .download a {
@@ -415,6 +430,9 @@
         <button type="button" class="chip" data-preset="480p" aria-pressed="false">480p</button>
         <button type="button" class="chip" data-preset="audio" aria-pressed="false">MP3 audio</button>
       </div>
+      <div class="options">
+        <button type="button" class="chip" id="subs-chip" aria-pressed="false">Subtitles + chapters</button>
+      </div>
 
       <div class="turnstile" id="turnstile" hidden></div>
 
@@ -454,7 +472,10 @@
         </span>
       </div>
 
-      <div class="error" id="error"></div>
+      <div class="error" id="error">
+        <span id="error-text"></span>
+        <button class="ghost retry" id="retry" type="button" hidden>Try again</button>
+      </div>
 
       <div class="download" id="download">
         <a id="download-link" href="#" download>
@@ -462,6 +483,15 @@
           <span id="download-label">Download</span>
         </a>
       </div>
+
+      <div class="sidecar" id="subtitle-download" hidden>
+        <a id="subtitle-link" href="#" download>Subtitles (.vtt)</a>
+      </div>
+
+      <details class="chapters" id="chapters" hidden>
+        <summary>Chapters</summary>
+        <ol id="chapters-list"></ol>
+      </details>
     </section>
   </main>
 
@@ -517,7 +547,7 @@
   const form = document.getElementById("form");
   const urlInput = document.getElementById("url");
   const submitBtn = document.getElementById("submit");
-  const chips = Array.from(document.querySelectorAll(".chip"));
+  const chips = Array.from(document.querySelectorAll(".chip[data-preset]"));
   const jobBox = document.getElementById("job");
   const titleEl = document.getElementById("job-title");
   const thumbEl = document.getElementById("thumb");
@@ -552,6 +582,13 @@
   const browserList = document.getElementById("browser-list");
   const agentRecheck = document.getElementById("agent-recheck");
   const clientBadge = document.getElementById("client-badge");
+  const subsChip = document.getElementById("subs-chip");
+  const errorText = document.getElementById("error-text");
+  const retryBtn = document.getElementById("retry");
+  const subtitleBox = document.getElementById("subtitle-download");
+  const subtitleLink = document.getElementById("subtitle-link");
+  const chaptersBox = document.getElementById("chapters");
+  const chaptersList = document.getElementById("chapters-list");
 
   const authDialog = document.getElementById("auth-dialog");
   const authForm = document.getElementById("auth-form");
@@ -577,6 +614,8 @@
   const PRESET_RANK = { "480p": 1, "720p": 2, "1080p": 3, "best": 4 };
 
   let preset = "best";
+  let subtitlesOn = false;
+  let lastMode = "web";
   let eventSource = null;
   let pollTimer = null;
   let config = null;
@@ -596,6 +635,32 @@
       chips.forEach(function (c) { c.setAttribute("aria-pressed", String(c === chip)); });
     });
   });
+
+  subsChip.addEventListener("click", function () {
+    subtitlesOn = !subtitlesOn;
+    subsChip.setAttribute("aria-pressed", String(subtitlesOn));
+  });
+
+  function setError(text, retryable) {
+    errorText.textContent = text;
+    retryBtn.hidden = !(retryable && urlInput.value.trim());
+    errorBox.classList.add("visible");
+  }
+
+  function clearError() {
+    errorText.textContent = "";
+    retryBtn.hidden = true;
+    errorBox.classList.remove("visible");
+  }
+
+  function formatTimestamp(seconds) {
+    const total = Math.max(0, Math.round(Number(seconds) || 0));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const minutes = h ? String(m).padStart(2, "0") : String(m);
+    return (h ? h + ":" : "") + minutes + ":" + String(s).padStart(2, "0");
+  }
 
   function formatBytes(n) {
     if (!n && n !== 0) return "";
@@ -631,9 +696,12 @@
   }
 
   function resetJobView() {
-    errorBox.classList.remove("visible");
-    errorBox.textContent = "";
+    clearError();
     downloadBox.classList.remove("visible");
+    subtitleBox.hidden = true;
+    subtitleLink.href = "#";
+    chaptersBox.hidden = true;
+    chaptersList.textContent = "";
     thumbEl.hidden = true;
     engineBadge.hidden = true;
     clientBadge.hidden = true;
@@ -648,7 +716,10 @@
   function render(job) {
     jobBox.classList.add("visible");
     titleEl.textContent = job.title || job.output_name || "Media";
-    stageBadge.textContent = STAGE_LABELS[job.stage] || job.stage;
+    const stageLabel = STAGE_LABELS[job.stage] || job.stage;
+    stageBadge.textContent = job.playlist_count
+      ? stageLabel + " · " + (job.playlist_index || 0) + "/" + job.playlist_count
+      : stageLabel;
     statProgress.textContent = Math.round(job.progress || 0) + "%";
     barFill.style.width = (job.progress || 0) + "%";
 
@@ -686,15 +757,14 @@
 
     if (job.status === "failed") {
       dot.className = "dot err";
-      errorBox.textContent = job.error || "Something went wrong.";
-      errorBox.classList.add("visible");
+      setError(job.error || "Something went wrong.", job.retryable);
       submitBtn.disabled = false;
+      appSubmit.disabled = false;
     }
 
     if (job.status === "expired") {
       dot.className = "dot err";
-      errorBox.textContent = "This file has expired. Run the link again.";
-      errorBox.classList.add("visible");
+      setError("This file has expired. Run the link again.", false);
       submitBtn.disabled = false;
     }
 
@@ -703,11 +773,39 @@
       barFill.style.width = "100%";
       statProgress.textContent = "100%";
       const size = job.output_size ? " (" + formatBytes(job.output_size) + ")" : "";
-      downloadLabel.textContent = "Download " + (job.output_name || "file") + size;
+      const count = job.playlist_count ? " · " + job.playlist_count + " videos" : "";
+      downloadLabel.textContent = "Download " + (job.output_name || "file") + count + size;
       downloadLink.href = job.download_url;
       downloadLink.setAttribute("download", job.output_name || "");
       downloadBox.classList.add("visible");
       submitBtn.disabled = false;
+    }
+
+    if (job.status === "done" && job.subtitle_url) {
+      subtitleLink.href = job.subtitle_url;
+      subtitleLink.textContent = "Subtitles" +
+        (job.subtitle_lang ? " (" + job.subtitle_lang + ")" : "") + " · .vtt";
+      subtitleLink.setAttribute("download", job.subtitle_name || "");
+      if (job.client === "desktop") {
+        subtitleLink.target = "_blank";
+        subtitleLink.rel = "noopener";
+      } else {
+        subtitleLink.removeAttribute("target");
+      }
+      subtitleBox.hidden = false;
+    }
+
+    if (job.status === "done" && Array.isArray(job.chapters) && job.chapters.length) {
+      chaptersList.textContent = "";
+      job.chapters.forEach(function (chapter) {
+        const li = document.createElement("li");
+        const stamp = document.createElement("span");
+        stamp.textContent = formatTimestamp(chapter.start);
+        li.appendChild(stamp);
+        li.appendChild(document.createTextNode(chapter.title || ""));
+        chaptersList.appendChild(li);
+      });
+      chaptersBox.hidden = false;
     }
 
     if (TERMINAL.has(job.status)) {
@@ -829,8 +927,10 @@
       if (misses >= 20) {
         stopTracking();
         dot.className = "dot err";
-        errorBox.textContent = "The Shorekeep app did not pick up this download. Follow the one-time setup below, then try again.";
-        errorBox.classList.add("visible");
+        setError(
+          "The Shorekeep app did not pick up this download. Follow the one-time setup below, then try again.",
+          true
+        );
         showAppPanel();
         submitBtn.disabled = false;
         appSubmit.disabled = false;
@@ -846,6 +946,7 @@
     const link = "shorekeep://run?pair=" + encodeURIComponent(key) +
       "&url=" + encodeURIComponent(url) +
       "&preset=" + encodeURIComponent(preset) +
+      "&subs=" + (subtitlesOn ? "1" : "0") +
       "&job=" + encodeURIComponent(jobId);
     try { window.location.href = link; } catch (e) { /* custom schemes may be blocked */ }
 
@@ -860,8 +961,10 @@
         clearInterval(agentWaitTimer);
         agentWaitTimer = null;
         dot.className = "dot err";
-        errorBox.textContent = "The Shorekeep app is not installed or did not start. Follow the one-time setup below, then try again.";
-        errorBox.classList.add("visible");
+        setError(
+          "The Shorekeep app is not installed or did not start. Follow the one-time setup below, then try again.",
+          true
+        );
         showAppPanel();
         submitBtn.disabled = false;
         appSubmit.disabled = false;
@@ -873,6 +976,7 @@
     const url = urlInput.value.trim();
     if (!url) { urlInput.focus(); return; }
     if (!me) { openAuth("login"); return; }
+    lastMode = "app";
 
     stopTracking();
     resetJobView();
@@ -886,8 +990,7 @@
     if (!pair.ok || !pair.body) {
       if (pair.status === 401) openAuth("login");
       dot.className = "dot err";
-      errorBox.textContent = (pair.body && pair.body.detail) || "Could not prepare the desktop download.";
-      errorBox.classList.add("visible");
+      setError((pair.body && pair.body.detail) || "Could not prepare the desktop download.", true);
       submitBtn.disabled = false;
       appSubmit.disabled = false;
       return;
@@ -899,7 +1002,12 @@
     const run = await agentApi("/v1/run", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Agent-Key": key },
-      body: JSON.stringify({ url: url, preset: preset, job_id: jobId })
+      body: JSON.stringify({
+        url: url,
+        preset: preset,
+        subtitles: subtitlesOn,
+        job_id: jobId
+      })
     }, 20000);
 
     if (run.ok && run.body) {
@@ -912,8 +1020,7 @@
 
     if (run.status && run.status !== 0) {
       dot.className = "dot err";
-      errorBox.textContent = agentErrorText(run);
-      errorBox.classList.add("visible");
+      setError(agentErrorText(run), run.status === 429 || run.status >= 500);
       submitBtn.disabled = false;
       appSubmit.disabled = false;
       return;
@@ -925,6 +1032,10 @@
   appSubmit.addEventListener("click", submitViaApp);
   agentPill.addEventListener("click", function () { checkAgent(true); });
   agentRecheck.addEventListener("click", function () { checkAgent(true); });
+  retryBtn.addEventListener("click", function () {
+    if (lastMode === "app") submitViaApp();
+    else form.requestSubmit();
+  });
 
   function presetAllowed(name) {
     if (!me && config && config.limits && config.limits.anon_max_preset) {
@@ -1112,8 +1223,7 @@
     if (!file) return;
     if (file.size > 256 * 1024) {
       cookiesInput.value = "";
-      errorBox.textContent = "The cookies file is larger than 256 KB.";
-      errorBox.classList.add("visible");
+      setError("The cookies file is larger than 256 KB.", false);
       return;
     }
     file.text().then(function (text) { cookiesInput.value = text; });
@@ -1161,6 +1271,7 @@
     const url = urlInput.value.trim();
     if (!url) { urlInput.focus(); return; }
 
+    lastMode = "web";
     stopTracking();
     resetJobView();
     jobBox.classList.add("visible");
@@ -1168,15 +1279,14 @@
     stageBadge.textContent = "Queued";
     submitBtn.disabled = true;
 
-    const payload = { url: url, preset: preset };
+    const payload = { url: url, preset: preset, subtitles: subtitlesOn };
     const cookiesText = cookiesInput.value.trim();
     if (cookiesText) payload.cookies = cookiesText;
     const token = turnstileToken();
     if (token) payload.turnstile_token = token;
     if (config && config.turnstile && config.turnstile.enabled && !token) {
       dot.className = "dot err";
-      errorBox.textContent = "Complete the bot check first.";
-      errorBox.classList.add("visible");
+      setError("Complete the bot check first.", false);
       submitBtn.disabled = false;
       return;
     }
@@ -1200,8 +1310,7 @@
       loadMe();
     } catch (error) {
       dot.className = "dot err";
-      errorBox.textContent = error.message;
-      errorBox.classList.add("visible");
+      setError(error.message, false);
       submitBtn.disabled = false;
     }
   });

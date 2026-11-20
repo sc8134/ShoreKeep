@@ -15,6 +15,10 @@ class JobTimeout(RuntimeError):
     pass
 
 
+class PlaylistEmpty(RuntimeError):
+    pass
+
+
 @dataclass
 class Stream:
     url: str

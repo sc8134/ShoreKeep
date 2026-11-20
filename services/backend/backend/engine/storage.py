@@ -27,6 +27,8 @@ def safe_download_name(title: str, ext: str) -> str:
 
 
 def _guess_mime(path: Path) -> str:
+    if path.suffix.lower() == ".vtt":
+        return "text/vtt"
     return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
 
 
@@ -42,11 +44,26 @@ class LocalStorage:
             mime=_guess_mime(dest),
         )
 
+    def save_sidecar(self, src: Path, job_id: str, title: str, lang: str) -> StoredFile:
+        ext = src.suffix.lower() or ".vtt"
+        dest = settings.media_dir / f"{job_id}.{lang}{ext}"
+        shutil.move(str(src), dest)
+        return StoredFile(
+            name=safe_download_name(f"{title}.{lang}", ext.lstrip(".")),
+            path=str(dest),
+            size=dest.stat().st_size,
+            mime=_guess_mime(dest),
+        )
+
     def delete(self, job: Job) -> None:
-        if job.output_path and not job.output_path.startswith("r2:"):
-            Path(job.output_path).unlink(missing_ok=True)
+        for value in (job.output_path, job.subtitle_path):
+            if value and not value.startswith("r2:"):
+                Path(value).unlink(missing_ok=True)
 
     def presign(self, job: Job) -> str | None:
+        return None
+
+    def presign_sidecar(self, job: Job) -> str | None:
         return None
 
 
@@ -81,9 +98,29 @@ class R2Storage:
             mime=mime,
         )
 
+    def save_sidecar(self, src: Path, job_id: str, title: str, lang: str) -> StoredFile:
+        ext = src.suffix.lower() or ".vtt"
+        key = f"media/{job_id}.{lang}{ext}"
+        mime = _guess_mime(src)
+        size = src.stat().st_size
+        self.client.upload_file(
+            str(src),
+            settings.r2_bucket,
+            key,
+            ExtraArgs={"ContentType": mime},
+        )
+        src.unlink(missing_ok=True)
+        return StoredFile(
+            name=safe_download_name(f"{title}.{lang}", ext.lstrip(".")),
+            path=f"r2:{key}",
+            size=size,
+            mime=mime,
+        )
+
     def delete(self, job: Job) -> None:
-        if job.output_path and job.output_path.startswith("r2:"):
-            self.client.delete_object(Bucket=settings.r2_bucket, Key=job.output_path[3:])
+        for value in (job.output_path, job.subtitle_path):
+            if value and value.startswith("r2:"):
+                self.client.delete_object(Bucket=settings.r2_bucket, Key=value[3:])
 
     def presign(self, job: Job) -> str | None:
         if not job.output_path or not job.output_path.startswith("r2:"):
@@ -91,6 +128,15 @@ class R2Storage:
         return self.client.generate_presigned_url(
             "get_object",
             Params={"Bucket": settings.r2_bucket, "Key": job.output_path[3:]},
+            ExpiresIn=settings.retention_seconds,
+        )
+
+    def presign_sidecar(self, job: Job) -> str | None:
+        if not job.subtitle_path or not job.subtitle_path.startswith("r2:"):
+            return None
+        return self.client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": settings.r2_bucket, "Key": job.subtitle_path[3:]},
             ExpiresIn=settings.retention_seconds,
         )
 

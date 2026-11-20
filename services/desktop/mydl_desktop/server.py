@@ -35,6 +35,7 @@ JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 class RunRequest(BaseModel):
     url: str = Field(min_length=10, max_length=2048)
     preset: str = "best"
+    subtitles: bool = False
     job_id: str | None = None
     cookie_browser: str | None = None
 
@@ -231,6 +232,7 @@ def create_app(config: AgentConfig, manager: JobManager) -> FastAPI:
                 job_id=job_id,
                 user=identity["user"],
                 cookie_browser=cookie_mode,
+                subtitles=payload.subtitles,
             )
         except JobBusy as exc:
             metering.complete(
@@ -276,6 +278,20 @@ def create_app(config: AgentConfig, manager: JobManager) -> FastAPI:
         if not path.exists():
             raise HTTPException(status_code=410, detail="File was moved or deleted")
         return FileResponse(path, media_type=job.mime or "application/octet-stream", filename=job.output_name)
+
+    @app.get("/v1/jobs/{job_id}/subtitles")
+    def download_subtitles(
+        job_id: str,
+        key: str = Query(default=""),
+        identity: dict[str, Any] = Depends(require_pair_query),
+    ):
+        job = _visible_job(job_id, identity)
+        if job.status != "done" or not job.subtitle_path:
+            raise HTTPException(status_code=404, detail="Subtitles are not available")
+        path = Path(job.subtitle_path)
+        if not path.exists():
+            raise HTTPException(status_code=410, detail="Subtitles were moved or deleted")
+        return FileResponse(path, media_type="text/vtt", filename=job.subtitle_name or path.name)
 
     return app
 

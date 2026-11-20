@@ -8,16 +8,26 @@ VIDEO_CAPS: dict[str, int | None] = {"best": None, "1080p": 1080, "720p": 720, "
 VIDEO_PREFERENCE = ("mp4", "m4v")
 
 
-def extract_info(url: str, cookiefile: str | None = None) -> dict:
+def extract_info(
+    url: str,
+    cookiefile: str | None = None,
+    playlist: bool = False,
+    limit: int | None = None,
+) -> dict:
     opts = {
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
-        "noplaylist": True,
-        "extract_flat": False,
+        "noplaylist": not playlist,
+        "extract_flat": "in_playlist" if playlist else False,
         "socket_timeout": 30,
         "cachedir": False,
     }
+    if playlist:
+        # Enumerate entries cheaply first; each entry is extracted fully when downloaded.
+        opts["ignoreerrors"] = True
+        if limit:
+            opts["playlistend"] = limit
     if cookiefile:
         opts["cookiefile"] = cookiefile
     try:
@@ -94,7 +104,9 @@ def build_plan(info: dict, preset: str, max_bytes: int = 0) -> MediaPlan:
 
 def _check_supported(info: dict) -> None:
     if info.get("_type") in {"playlist", "multi_video"} or info.get("entries"):
-        raise ExtractionError("Playlists are not supported yet. Paste a single video URL.")
+        raise ExtractionError(
+            "This URL points to a playlist that could not be expanded. Paste a single video URL."
+        )
     if info.get("is_live"):
         raise ExtractionError("Live streams are not supported yet.")
     if info.get("_has_drm") or any(f.get("has_drm") for f in info.get("formats") or []):
@@ -119,7 +131,11 @@ def _has_video(fmt: dict) -> bool:
 
 
 def _has_audio(fmt: dict) -> bool:
-    return fmt.get("acodec") not in (None, "none")
+    codec = fmt.get("acodec")
+    if codec not in (None, "none"):
+        return True
+    # HLS audio renditions often omit acodec and mark vcodec as "none".
+    return codec is None and fmt.get("vcodec") == "none"
 
 
 def _size(fmt: dict) -> int | None:
@@ -156,7 +172,13 @@ def _pick_audio(formats: list[dict], max_bytes: int) -> Stream:
         candidates = [f for f in formats if _has_audio(f) and _within(f, max_bytes)]
     if not candidates:
         raise ExtractionError("No audio track fits under the configured size limit")
-    return _stream(max(candidates, key=_audio_key))
+    # yt-dlp lists formats from lowest to highest quality; later wins ties
+    # because HLS renditions often carry no bitrate metadata.
+    best = candidates[0]
+    for fmt in candidates[1:]:
+        if _audio_key(fmt) >= _audio_key(best):
+            best = fmt
+    return _stream(best)
 
 
 def _pref_ext(fmt: dict) -> int:

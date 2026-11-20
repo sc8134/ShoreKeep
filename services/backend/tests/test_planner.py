@@ -76,6 +76,25 @@ def test_hls_stream_routes_to_ytdlp():
     assert plan.selector == "hls-1080+140"
 
 
+def test_hls_audio_renditions_without_codecs_are_detected():
+    def audio_rendition(name: str) -> dict:
+        return make_format(
+            format_id=f"hls-audio0-{name}",
+            url=f"https://cdn.example.com/audio-{name}.m3u8",
+            protocol="m3u8_native",
+            vcodec="none",
+            acodec=None,
+            height=None,
+            tbr=None,
+            filesize=None,
+        )
+
+    plan = build_plan(make_info(audio_rendition("low"), audio_rendition("medium")), "audio")
+
+    assert plan.engine == "ytdlp"
+    assert plan.audio.format_id == "hls-audio0-medium"
+
+
 def test_audio_preset_selects_best_audio():
     audio_a = make_format(format_id="139", vcodec=None, acodec="mp4a", ext="m4a", height=None, tbr=48)
     audio_b = make_format(format_id="140", vcodec=None, acodec="mp4a", ext="m4a", height=None, tbr=128)
