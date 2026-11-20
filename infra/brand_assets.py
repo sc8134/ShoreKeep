@@ -2,33 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 FONT = Path("C:/Windows/Fonts/seguisb.ttf")
 MASTER = ROOT / "assets" / "brand" / "shorekeep-icon.png"
+TRAY = ROOT / "assets" / "brand" / "shorekeep-seal.png"
 SIZES = (512, 256, 192, 128, 64, 48, 32, 24, 16)
-
-
-def clean_master(path: Path) -> Image.Image:
-    image = Image.open(path).convert("RGBA")
-    red, green, blue, alpha = image.split()
-
-    def white(channel):
-        return channel.point(lambda value: 255 if value >= 235 else 0)
-
-    white_mask = ImageChops.multiply(ImageChops.multiply(white(red), white(green)), white(blue))
-    image.putalpha(ImageChops.subtract(alpha, white_mask))
-    return image
-
-
-def tray_silhouette(master: Image.Image) -> Image.Image:
-    red, green, blue, _alpha = master.split()
-    light = ImageChops.add(ImageChops.add(red, green), blue)
-    mask = light.point(lambda value: 0 if value <= 150 else min(255, (value - 150) * 255 // 200))
-    silhouette = Image.new("RGBA", master.size, (255, 255, 255, 255))
-    silhouette.putalpha(mask)
-    return silhouette
 
 
 def lockup(master: Image.Image, path: Path, color: tuple[int, int, int, int]) -> None:
@@ -49,7 +29,7 @@ def lockup(master: Image.Image, path: Path, color: tuple[int, int, int, int]) ->
 
 def main() -> None:
     brand = ROOT / "assets" / "brand"
-    master = clean_master(MASTER)
+    master = Image.open(MASTER).convert("RGBA")
     master.save(brand / "shorekeep-icon.png", optimize=True)
 
     for size in SIZES:
@@ -61,7 +41,7 @@ def main() -> None:
         sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
     )
 
-    tray = tray_silhouette(master)
+    tray = Image.open(TRAY).convert("RGBA")
     for size in (16, 24, 32, 48, 64):
         tray.resize((size, size), Image.LANCZOS).save(brand / f"shorekeep-tray-{size}.png", optimize=True)
     lockup(master, brand / "shorekeep-lockup-light.png", (11, 31, 42, 255))
