@@ -20,7 +20,7 @@ if (-not $SkipInstall) {
 # Self-extracting setup built with PyInstaller, so no external tool is required.
 & $Python -m PyInstaller --noconfirm --clean --distpath "$Root\dist\installer" --workpath "$Root\build\setup" (Join-Path $PSScriptRoot "setup.spec")
 
-$Setup = Join-Path $Root "dist\installer\Shorekeep-Setup-0.2.0.exe"
+$Setup = Join-Path $Root "dist\installer\Shorekeep-Setup-0.3.0.exe"
 if (-not (Test-Path $Setup)) {
     throw "Setup build failed; $Setup was not produced."
 }
@@ -34,7 +34,7 @@ if (-not $Iscc) {
 }
 if ($Iscc) {
     & $Iscc (Join-Path $PSScriptRoot "Shorekeep.iss")
-    Write-Host "Inno installer: $Root\dist\installer\Shorekeep-Setup-0.2.0.exe"
+    Write-Host "Inno installer: $Root\dist\installer\Shorekeep-Setup-0.3.0.exe"
 } else {
     Write-Host "Inno Setup not found; skipping the Inno installer (the self-extracting setup above is ready)."
 }

@@ -28,7 +28,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="Shorekeep-Setup-0.2.0",
+    name="Shorekeep-Setup-0.3.0",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

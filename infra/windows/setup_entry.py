@@ -12,7 +12,7 @@ from pathlib import Path
 
 APP_NAME = "Shorekeep"
 APP_EXE = "Shorekeep.exe"
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 CREATE_NO_WINDOW = 0x08000000
 MB_OK = 0x0
 MB_YESNO = 0x4
