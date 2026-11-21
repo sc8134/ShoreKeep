@@ -72,6 +72,31 @@ class DesktopJob(SQLModel, table=True):
     finished_at: datetime | None = None
 
 
+class Subscription(SQLModel, table=True):
+    """Current billing subscription per user, mirrored from Paddle webhooks."""
+
+    user_id: str = Field(primary_key=True, foreign_key="user.id")
+    provider: str = "paddle"
+    customer_id: str | None = Field(default=None, index=True)
+    subscription_id: str | None = Field(default=None, index=True, unique=True)
+    price_id: str | None = None
+    interval: str | None = None
+    status: str = "inactive"
+    current_period_end: datetime | None = None
+    cancel_at_period_end: bool = False
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class BillingEvent(SQLModel, table=True):
+    """Processed webhook ids, so Paddle retries are idempotent."""
+
+    event_id: str = Field(primary_key=True)
+    event_type: str = Field(index=True)
+    user_id: str | None = Field(default=None, index=True)
+    received_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class Job(SQLModel, table=True):
     id: str = Field(primary_key=True)
     url: str
@@ -80,6 +105,7 @@ class Job(SQLModel, table=True):
     client_hash: str | None = Field(default=None, index=True)
     cookies_enc: str | None = None
     want_subtitles: bool = False
+    max_filesize_mb: int | None = None
 
     status: str = "queued"
     stage: str = "queued"

@@ -9,7 +9,7 @@ Shorekeep is a video/audio download platform with a hybrid engine. The product i
 - **ffmpeg** muxes/remuxes (`-c copy` where possible) and extracts MP3 audio
 - **FastAPI + SQLite** API and single-page UI, with SSE progress and a DB-polling worker
 
-Status: **Phase 4**. Single jobs and playlists, presets, progress streaming, auto-expiry, email/password accounts, free-tier limits, optional Turnstile, encrypted per-job cookies, VTT subtitles and chapter metadata, structured error codes, and an optional desktop app that downloads locally with automatic browser cookies and server-enforced metering. Billing and Postgres/Redis scaling come next.
+Status: **Phase 4 + billing**. Single jobs and playlists, presets, progress streaming, auto-expiry, email/password accounts, free-tier limits, optional Turnstile, encrypted per-job cookies, VTT subtitles and chapter metadata, structured error codes, an optional desktop app that downloads locally with automatic browser cookies and server-enforced metering, and Paddle billing for Pro ($5/month or $45/year, 4 GB files). Priority queue and Postgres/Redis scaling come next.
 
 ## Architecture
 
@@ -70,19 +70,38 @@ Failures carry a stable `error_code` alongside the human message (`engine/errors
 
 Limits are enforced server-side (persistent across API restarts), with an in-process sliding window as a burst guard. The counters combine cloud jobs (`job` table) and desktop downloads (`desktopjob` table), so a paired desktop app cannot be used to bypass the plan: each download reserves quota before it starts.
 
-| | Jobs/hour | Concurrent | Max preset |
-|---|---|---|---|
-| Guest | 5 per IP | 1 | 720p (audio always allowed) |
-| Free account | 20 per user | 2 | all |
-| Pro (reserved for Phase 3) | 100 per user | 4 | all |
+| | Jobs/hour | Concurrent | Max preset | Max file size |
+|---|---|---|---|---|
+| Guest | 5 per IP | 1 | 720p (audio always allowed) | 2 GB |
+| Free account | 20 per user | 2 | all | 2 GB |
+| Pro ($5/month or $45/year) | 100 per user | 4 | all | 4 GB |
 
-A global `MAX_QUEUE_DEPTH` still caps total queued/running work. IPs are stored only as a salted SHA-256 prefix (`client_hash`), never in plaintext.
+A global `MAX_QUEUE_DEPTH` still caps total queued/running work. IPs are stored only as a salted SHA-256 prefix (`client_hash`), never in plaintext. The file cap is captured per job when it is created (`job.max_filesize_mb`), so a plan change mid-download cannot raise or lower an in-flight transfer.
 
 ## Accounts
 
 Email + password only (no OAuth, no email verification yet). Passwords are hashed with scrypt; sessions are opaque 256-bit tokens stored as SHA-256 hashes with a 30-day expiry. The browser gets an `HttpOnly`, `SameSite=Lax` cookie; API clients can use `Authorization: Bearer <token>`.
 
 Cookie-authenticated mutations check the `Origin` header (CSRF guard) against the public base URL. Sign-up and sign-in are rate-limited per IP.
+
+## Billing (Paddle)
+
+Pro is sold through **Paddle Billing**, a merchant of record: Paddle collects card and local payment methods, calculates sales tax/VAT/GST, handles chargebacks, and pays out internationally (including Nepal-based sellers that Stripe does not serve). Shorekeep never sees card data.
+
+The flow is hosted-checkout:
+
+1. the signed-in UI calls `POST /v1/billing/checkout` with `month` or `year`;
+2. the API creates a Paddle transaction with `custom_data.user_id` and returns its id;
+3. the browser opens Paddle.js overlay checkout for that transaction (no prices or totals are trusted from the client);
+4. Paddle sends signed webhooks to `POST /v1/billing/webhook`;
+5. the API mirrors subscription state into `Subscription` and flips `user.plan` to `pro`/`free`;
+6. `POST /v1/billing/portal` returns an authenticated Paddle customer-portal link for canceling, switching period, or updating the card.
+
+Access rules: `active`, `trialing`, and `past_due` count as Pro; `paused` and `canceled` do not. A scheduled cancellation keeps Pro until the paid period ends. As a safety net, sign-in re-checks an active Pro subscription and downgrades it when the paid period expired more than a day ago, so a missed webhook cannot leave stale access.
+
+Configuration (see `.env.example`): create the two Pro prices in Paddle, copy the API key, client-side token, webhook secret, and both `pri_...` ids into `PADDLE_*`. Add `https://your-domain/v1/billing/webhook` as a webhook destination and subscribe to `subscription.*` and `transaction.completed` events. Approve your site's domain for Paddle checkout. Billing stays disabled (Upgrade hidden) until the API key, client token, webhook secret, and monthly price id are set; the yearly toggle is disabled automatically when no yearly price id is configured.
+
+Local development note: the overlay checkout opens, but Pro activation needs webhooks, which require a public URL. Deploy the API, or expose it with a tunnel, before testing an end-to-end upgrade. Webhook deliveries are idempotent per `event_id` and verified with the `Paddle-Signature` HMAC (timestamp plus raw body, five-second tolerance).
 
 ## Bring-your-own cookies (BYO)
 
@@ -225,6 +244,9 @@ Open http://127.0.0.1:8000, paste a link, pick a preset. Accounts, quota, and hi
 | GET | `/v1/agent/me` | Desktop app: validate its device token and read usage (`Authorization: Bearer`) |
 | POST | `/v1/agent/jobs` | Desktop app: reserve quota before a local download (`{job_id,url,preset}`) |
 | PUT | `/v1/agent/jobs/{job_id}` | Desktop app: report the final status/size (upsert, safe to replay) |
+| POST | `/v1/billing/checkout` | Signed-in: create a Paddle transaction (`{ "interval": "month" \| "year" }`) |
+| POST | `/v1/billing/portal` | Signed-in: authenticated Paddle customer-portal link |
+| POST | `/v1/billing/webhook` | Paddle webhooks (signature verified, idempotent) |
 | GET | `/v1/health` | Liveness |
 
 The desktop agent itself exposes `GET /health`, `GET /v1/me`, `POST /v1/run`, `GET /v1/jobs`, `GET /v1/jobs/{id}`, and `GET /v1/jobs/{id}/file?key=` on `127.0.0.1:47821`.
@@ -248,6 +270,9 @@ See `.env.example`. Notable knobs:
 - `ANON_JOBS_PER_IP_HOUR`, `FREE_JOBS_PER_USER_HOUR`, `PRO_JOBS_PER_USER_HOUR`
 - `ANON_MAX_ACTIVE_JOBS`, `FREE_MAX_ACTIVE_JOBS`, `PRO_MAX_ACTIVE_JOBS`
 - `ANON_MAX_PRESET`: guest quality cap (`720p` default; empty disables)
+- `PRO_MAX_FILESIZE_MB`: Pro per-file cap (default 4096; free tier uses `MAX_FILESIZE_MB`)
+- `PADDLE_ENV`, `PADDLE_API_KEY`, `PADDLE_CLIENT_TOKEN`, `PADDLE_WEBHOOK_SECRET`, `PADDLE_PRICE_PRO_MONTHLY`, `PADDLE_PRICE_PRO_YEARLY`: billing (disabled while any are empty)
+- `PRO_PRICE_MONTHLY_USD`, `PRO_PRICE_YEARLY_USD`, `BILLING_CURRENCY`: display labels only; keep them in sync with Paddle
 - `TURNSTILE_ENABLED`, `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET`
 - `MAX_COOKIE_KB`: upload cap for `cookies.txt` (default 256)
 - `AGENT_PAIR_TTL_SECONDS`: lifetime of a one-time desktop pairing token (default 300)
@@ -262,7 +287,7 @@ See `.env.example`. Notable knobs:
 .venv/Scripts/python.exe -m pytest services/backend/tests -q
 ```
 
-118 tests cover format planning/routing, size caps, DRM/playlist rejection, playlist ZIP building, subtitle selection, HLS subtitle merging, chapter parsing, the error taxonomy, URL safety (SSRF), rate limiting, auth/sessions, quotas, job ownership, CSRF origin checks, Turnstile gating, cookie parsing/encryption, agent pairing, job flows, shared cloud/desktop metering (idempotent reserves, concurrency, stale reservations, offline replay), and the desktop agent (host guard, local pairing, plan gating, SSRF). Desktop tests are skipped automatically if the `mydl_desktop` package is not installed. `conftest.py` points `DATA_DIR` at a temp directory so tests never touch your dev database.
+133 tests cover format planning/routing, size caps (including the per-job Pro cap), DRM/playlist rejection, playlist ZIP building, subtitle selection, HLS subtitle merging, chapter parsing, the error taxonomy, URL safety (SSRF), rate limiting, auth/sessions, quotas, job ownership, CSRF origin checks, Turnstile gating, cookie parsing/encryption, agent pairing, job flows, shared cloud/desktop metering (idempotent reserves, concurrency, stale reservations, offline replay), billing (Paddle checkout gating, webhook signatures and idempotency, subscription activation/cancellation, lazy expiry, portal links), and the desktop agent (host guard, local pairing, plan gating, SSRF). Desktop tests are skipped automatically if the `mydl_desktop` package is not installed. `conftest.py` points `DATA_DIR` at a temp directory so tests never touch your dev database.
 
 CI runs the same suite on every push and pull request (`.github/workflows/ci.yml`). A scheduled workflow (`.github/workflows/ytdlp-update.yml`) checks PyPI every Monday, bumps the `yt-dlp` floor in both packages, runs the suite against that exact release, and opens a pull request when a newer version exists.
 
@@ -281,7 +306,8 @@ Both containers share a `media_data` volume (SQLite + files). For multi-host sca
 - [x] Phase 1: hybrid pipeline, presets, SSE, retention, UI
 - [x] Phase 2: accounts, free-tier limits, Turnstile, BYO-cookies (encrypted, per-job)
 - [x] Phase 2.5: desktop companion: local downloads, automatic browser cookies, `shorekeep://` pairing, shared server-side metering
-- [ ] Phase 3: billing (freemium tiers), priority queue, R2 in production
+- [x] Phase 3a: billing (Paddle: $5/month or $45/year Pro, checkout, webhooks, customer portal, 4 GB Pro cap)
+- [ ] Phase 3b: priority queue and R2 in production
 - [x] Phase 4: playlists, subtitles/chapters, error taxonomy, weekly yt-dlp updates in CI
 
 ## Known limitations
@@ -292,6 +318,7 @@ Both containers share a `media_data` volume (SQLite + files). For multi-host sca
 - SQLite only; SSE polls the DB every 500 ms (off the event loop)
 - No email verification, password reset, or OAuth yet; a verification flow is needed before a public launch
 - Turnstile is off by default; enable it (with `SECRET_KEY` set) before exposing the API publicly
+- Billing needs a public deployment because Paddle delivers webhooks over HTTPS; the local and desktop builds run with billing disabled. Paddle must also approve the checkout domain, and the `$5`/`$45` labels are display-only values that must match the prices configured in Paddle
 - Desktop cookie extraction depends on the browser: Firefox works; Chromium 127+ App-Bound Encryption often blocks it. Device tokens are not revocable from the UI yet. A dev installer exists (`infra/windows/build.ps1`), but it is unsigned and unpublishable: code signing, auto-update, and a revocation UI are deferred until the product is validated
 - Desktop job history is in memory in the agent (gone on restart); files themselves remain on disk. Metering is cooperative: the server enforces quota for the shipped agent, but a modified client could under-report (it runs on the user's machine). Usage reports queued while offline are replayed later, so a job can land in a later hour bucket
 - SSRF guard blocks private/loopback targets at enqueue and before MY-DL transfers; production should still enforce egress firewall rules (redirect-based SSRF via yt-dlp extractors is not fully covered)

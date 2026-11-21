@@ -34,6 +34,7 @@ _JOB_COLUMNS = {
     "playlist_index": "INTEGER",
     "playlist_count": "INTEGER",
     "error_code": "VARCHAR",
+    "max_filesize_mb": "INTEGER",
 }
 
 

@@ -201,7 +201,12 @@ def create_job(
     client_hash = hash_ip(ip)
     used = plan_usage(session, user, client_hash)
     if used.used_this_hour >= used.limit_per_hour:
-        hint = "Sign in for a higher limit." if user is None else "Try again later."
+        if user is None:
+            hint = "Sign in for a higher limit."
+        elif plan.name == "free":
+            hint = "Upgrade to Pro for 100 per hour."
+        else:
+            hint = "Try again later."
         raise HTTPException(
             status_code=429,
             detail=f"Hourly limit reached ({plan.jobs_per_hour}/hour). {hint}",
@@ -247,6 +252,7 @@ def create_job(
         user_id=user.id if user else None,
         client_hash=client_hash,
         cookies_enc=cookies_enc,
+        max_filesize_mb=plan.max_filesize_mb,
     )
     session.add(job)
     session.commit()

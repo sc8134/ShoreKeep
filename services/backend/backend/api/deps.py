@@ -6,6 +6,7 @@ from fastapi import Depends, HTTPException, Request
 from sqlmodel import Session
 
 from ..auth import SESSION_COOKIE, resolve_session
+from ..billing import sync_plan
 from ..config import settings
 from ..db import get_session
 from ..models import User
@@ -31,6 +32,7 @@ def optional_user(
     user = resolve_session(session, token)
     if user is not None:
         request.state.auth_source = source
+        user = sync_plan(session, user)
     return user
 
 

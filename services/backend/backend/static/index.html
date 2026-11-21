@@ -604,6 +604,7 @@
       linear-gradient(180deg, #f0e4ca, #e3d3b1);
     color: var(--ink);
     border-radius: 3px; padding: 26px 24px 22px; width: min(92vw, 400px);
+    max-height: calc(100vh - 40px); overflow-y: auto;
     box-shadow:
       inset 0 0 0 5px rgba(255, 248, 230, 0.45),
       inset 0 0 0 6px rgba(43, 33, 24, 0.2),
@@ -626,6 +627,30 @@
   .auth-switch { margin: 4px 0 0; font-size: 13px; color: var(--muted); text-align: center; }
   .auth-switch a { color: var(--oxblood); text-decoration: none; border-bottom: 1px solid rgba(125, 44, 31, 0.4); }
   .auth-switch a:hover { color: var(--oxblood-dark); border-bottom-color: var(--oxblood-dark); }
+
+  .pricing { width: min(92vw, 440px); }
+  .pricing-lede { margin: -4px 0 16px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+  .plan-toggle { display: flex; gap: 8px; margin-bottom: 14px; }
+  .plan-toggle button {
+    flex: 1; font-family: var(--font-display); font-size: 11px; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--ink-soft); cursor: pointer;
+    background: rgba(255, 248, 230, 0.35); border: 1px solid var(--line-soft);
+    border-radius: 2px; padding: 8px 6px; transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .plan-toggle button:hover { color: var(--ink); border-color: var(--ink-soft); }
+  .plan-toggle button[aria-pressed="true"] {
+    color: var(--oxblood); border-color: rgba(125, 44, 31, 0.55); background: rgba(255, 248, 230, 0.75);
+  }
+  .plan-toggle .save { color: var(--ok); font-size: 9px; letter-spacing: 0.06em; }
+  .plan-feats { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 7px; font-size: 12.5px; color: var(--ink-soft); }
+  .plan-feats li::before { content: "\2726"; color: var(--oxblood); margin-right: 8px; font-size: 10px; }
+  .plan-feats strong { color: var(--ink); }
+  .plan-price { margin: 0 0 16px; font-family: var(--font-display); font-size: 31px; color: var(--ink); line-height: 1; }
+  .plan-price #plan-period { font-family: var(--font-body); font-size: 12.5px; letter-spacing: 0.08em; color: var(--muted); margin-left: 5px; }
+  .plan-price .equiv { display: block; font-family: var(--font-body); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-top: 6px; }
+  .billing-note { margin: 12px 0 0; font-size: 10.5px; color: var(--muted); line-height: 1.55; text-align: center; }
+  .topbar .ghost.upgrade { color: #f0d08a; border-color: rgba(222, 189, 133, 0.7); }
+  .topbar .ghost.upgrade:hover { color: #ffe6ab; border-color: rgba(255, 226, 160, 0.95); }
 
   .topbar { animation: rise 0.55s var(--ease) both; }
   header { animation: rise 0.8s 0.06s var(--ease) both; }
@@ -748,6 +773,8 @@
       <button class="app-pill offline" id="agent-pill" type="button" hidden>Shorekeep app</button>
       <span class="who" id="who" hidden></span>
       <span class="quota" id="quota" hidden></span>
+      <button class="ghost upgrade" id="upgrade" type="button" hidden>Upgrade</button>
+      <button class="ghost" id="manage-billing" type="button" hidden>Billing</button>
       <button class="ghost" id="auth-open" type="button">Sign in</button>
       <button class="ghost" id="signout" type="button" hidden>Sign out</button>
     </div>
@@ -897,6 +924,28 @@
   </form>
 </dialog>
 
+<dialog id="pricing-dialog" class="pricing">
+  <h2>Shorekeep Pro</h2>
+  <p class="pricing-lede">Faster queues, bigger files. Cancel anytime.</p>
+  <div class="plan-toggle" role="group" aria-label="Billing period">
+    <button type="button" id="plan-month" aria-pressed="true">Monthly</button>
+    <button type="button" id="plan-year" aria-pressed="false">Yearly <span class="save">save 25%</span></button>
+  </div>
+  <ul class="plan-feats">
+    <li><strong id="pro-jobs">100</strong> downloads every hour</li>
+    <li><strong id="pro-active">4</strong> downloads at the same time</li>
+    <li>Files up to <strong id="pro-size">4 GB</strong></li>
+    <li>Every format, including best quality</li>
+  </ul>
+  <p class="plan-price"><span id="plan-price">$5</span><span id="plan-period">/month</span><span class="equiv" id="plan-equiv" hidden></span></p>
+  <div class="auth-actions">
+    <button class="primary" id="plan-buy" type="button">Continue to checkout</button>
+    <button class="ghost" id="plan-close" type="button">Not now</button>
+  </div>
+  <p class="auth-error" id="plan-error"></p>
+  <p class="billing-note">Card payments are processed securely by Paddle, our merchant of record. Cancel anytime from Billing.</p>
+</dialog>
+
 <script>
 (function () {
   "use strict";
@@ -962,6 +1011,20 @@
   const authClose = document.getElementById("auth-close");
   const authSwitch = document.getElementById("auth-switch");
   const authSwitchLabel = document.getElementById("auth-switch-label");
+  const upgradeBtn = document.getElementById("upgrade");
+  const manageBtn = document.getElementById("manage-billing");
+  const pricingDialog = document.getElementById("pricing-dialog");
+  const planMonth = document.getElementById("plan-month");
+  const planYear = document.getElementById("plan-year");
+  const planPrice = document.getElementById("plan-price");
+  const planPeriod = document.getElementById("plan-period");
+  const planEquiv = document.getElementById("plan-equiv");
+  const planBuy = document.getElementById("plan-buy");
+  const planClose = document.getElementById("plan-close");
+  const planError = document.getElementById("plan-error");
+  const proJobs = document.getElementById("pro-jobs");
+  const proActive = document.getElementById("pro-active");
+  const proSize = document.getElementById("pro-size");
 
   const STAGE_LABELS = {
     queued: "Queued",
@@ -985,6 +1048,8 @@
   let me = null;
   let authMode = "login";
   let turnstileReady = false;
+  let billingInterval = "month";
+  let paddlePromise = null;
 
   const AGENT_BASE = "http://127.0.0.1:47821";
   let agent = null;
@@ -1426,18 +1491,181 @@
     }
   }
 
+  function formatShortDate(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (isNaN(date.getTime())) return "";
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+
+  function billingReady() {
+    return !!(config && config.billing && config.billing.enabled);
+  }
+
+  function selectInterval(interval) {
+    const billing = (config && config.billing) || {};
+    const prices = billing.prices || { month: "$5", year: "$45" };
+    const available = billing.available || { month: true, year: true };
+    planMonth.disabled = !available.month;
+    planYear.disabled = !available.year;
+    billingInterval = interval === "year" ? "year" : "month";
+    if (!available[billingInterval]) billingInterval = available.month ? "month" : "year";
+    planMonth.setAttribute("aria-pressed", String(billingInterval === "month"));
+    planYear.setAttribute("aria-pressed", String(billingInterval === "year"));
+    planPrice.textContent = prices[billingInterval] || "";
+    if (billingInterval === "year") {
+      planPeriod.textContent = "/year";
+      const amount = Number(String(prices.year || "").replace(/[^0-9.]/g, ""));
+      planEquiv.hidden = !(amount > 0);
+      planEquiv.textContent = amount > 0 ? "about $" + (amount / 12).toFixed(2) + " per month" : "";
+    } else {
+      planPeriod.textContent = "/month";
+      planEquiv.hidden = true;
+      planEquiv.textContent = "";
+    }
+  }
+
+  function applyBillingConfig() {
+    const billing = config && config.billing;
+    if (!billing) return;
+    const pro = billing.pro || {};
+    proJobs.textContent = pro.jobs_per_hour || "100";
+    proActive.textContent = pro.max_active_jobs || "4";
+    const sizeMb = pro.max_filesize_mb || 4096;
+    proSize.textContent = sizeMb >= 1024 ? Math.round(sizeMb / 1024) + " GB" : sizeMb + " MB";
+    selectInterval(billingInterval);
+  }
+
+  function openPricing() {
+    if (!me) { openAuth("login"); return; }
+    if (!billingReady()) return;
+    planError.classList.remove("visible");
+    planError.textContent = "";
+    planBuy.disabled = false;
+    applyBillingConfig();
+    if (typeof pricingDialog.showModal === "function") pricingDialog.showModal();
+    else pricingDialog.setAttribute("open", "");
+  }
+
+  function closePricing() {
+    if (typeof pricingDialog.close === "function") pricingDialog.close();
+    else pricingDialog.removeAttribute("open");
+  }
+
+  function setPlanError(message) {
+    planError.textContent = message;
+    planError.classList.add("visible");
+  }
+
+  function loadPaddle() {
+    if (paddlePromise) return paddlePromise;
+    paddlePromise = new Promise(function (resolve, reject) {
+      function ready() {
+        try {
+          const billing = config && config.billing;
+          if (!billing || !window.Paddle) throw new Error("The payment window is unavailable right now.");
+          if (billing.environment === "sandbox" && window.Paddle.Environment) {
+            window.Paddle.Environment.set("sandbox");
+          }
+          window.Paddle.Initialize({
+            token: billing.client_token,
+            eventCallback: function (event) {
+              const name = event && event.name;
+              if (name === "checkout.completed") {
+                closePricing();
+                refreshAfterCheckout(0);
+              } else if (name === "checkout.closed") {
+                planBuy.disabled = false;
+              }
+            }
+          });
+          resolve(window.Paddle);
+        } catch (error) {
+          reject(error);
+        }
+      }
+      if (window.Paddle) { ready(); return; }
+      const script = document.createElement("script");
+      script.src = "https://cdn.paddle.com/paddle/v2/paddle.js";
+      script.async = true;
+      script.onload = ready;
+      script.onerror = function () {
+        reject(new Error("Could not reach the payment window. Check your connection and try again."));
+      };
+      document.head.appendChild(script);
+    });
+    return paddlePromise;
+  }
+
+  function refreshAfterCheckout(attempt) {
+    loadMe().then(function () {
+      if (attempt < 4 && me && me.user && me.user.plan !== "pro") {
+        setTimeout(function () { refreshAfterCheckout(attempt + 1); }, 3000);
+      }
+    });
+  }
+
+  async function startCheckout() {
+    if (!billingReady()) return;
+    planBuy.disabled = true;
+    planError.classList.remove("visible");
+    try {
+      const result = await api("/v1/billing/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ interval: billingInterval })
+      });
+      if (!result.ok) {
+        const detail = result.body && result.body.detail;
+        throw new Error(typeof detail === "string" ? detail : "Could not start checkout.");
+      }
+      const Paddle = await loadPaddle();
+      Paddle.Checkout.open({ transactionId: result.body.transaction_id });
+    } catch (error) {
+      planBuy.disabled = false;
+      setPlanError(error.message);
+    }
+  }
+
+  async function openBillingPortal() {
+    if (!billingReady()) return;
+    manageBtn.disabled = true;
+    try {
+      const result = await api("/v1/billing/portal", { method: "POST" });
+      if (result.ok && result.body && result.body.url) {
+        window.open(result.body.url, "_blank", "noopener");
+        return;
+      }
+      const detail = result.body && result.body.detail;
+      openPricing();
+      setPlanError(typeof detail === "string" ? detail : "Could not open the billing portal.");
+    } catch (error) {
+      openPricing();
+      setPlanError(error.message);
+    } finally {
+      manageBtn.disabled = false;
+    }
+  }
+
   function renderAccount() {
     const signedIn = me && me.user;
+    const subscription = signedIn ? me.subscription : null;
     accountWho.hidden = !signedIn;
     accountQuota.hidden = !signedIn;
     signoutBtn.hidden = !signedIn;
     authOpen.hidden = !!signedIn;
     cookiesBox.hidden = !signedIn;
+    upgradeBtn.hidden = !(signedIn && billingReady() && me.user.plan !== "pro");
+    manageBtn.hidden = !(signedIn && billingReady() && subscription && subscription.can_manage);
     if (signedIn) {
       accountWho.textContent = me.user.email;
       const u = me.usage;
       let text = me.user.plan + " · " + u.used_this_hour + "/" + u.limit_per_hour + " this hour";
       if (u.max_preset) text += " · up to " + u.max_preset;
+      if (me.user.plan === "pro" && subscription && subscription.current_period_end) {
+        const day = formatShortDate(subscription.current_period_end);
+        if (day) text += subscription.cancel_at_period_end ? " · ends " + day : " · renews " + day;
+      }
       accountQuota.textContent = text;
       accountQuota.title = u.active_jobs + " of " + u.max_active_jobs + " concurrent job slots in use";
     } else if (config && config.limits && config.limits.anon_max_preset) {
@@ -1540,6 +1768,13 @@
     openAuth(authMode === "login" ? "register" : "login");
   });
 
+  upgradeBtn.addEventListener("click", openPricing);
+  manageBtn.addEventListener("click", openBillingPortal);
+  planMonth.addEventListener("click", function () { selectInterval("month"); });
+  planYear.addEventListener("click", function () { selectInterval("year"); });
+  planBuy.addEventListener("click", startCheckout);
+  planClose.addEventListener("click", closePricing);
+
   authForm.addEventListener("submit", async function (event) {
     event.preventDefault();
     const email = authEmail.value.trim();
@@ -1601,6 +1836,7 @@
   async function loadConfig() {
     const result = await api("/v1/config");
     config = result.ok && result.body ? result.body : null;
+    if (config && config.billing) applyBillingConfig();
     if (config && config.turnstile && config.turnstile.enabled && config.turnstile.site_key) {
       turnstileBox.hidden = false;
       const script = document.createElement("script");

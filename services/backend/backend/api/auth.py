@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
+from .. import billing
 from ..auth import (
     SESSION_COOKIE,
     AuthError,
@@ -60,9 +61,18 @@ class UsageRead(BaseModel):
     presets: list[str]
 
 
+class SubscriptionRead(BaseModel):
+    status: str
+    interval: str | None
+    current_period_end: datetime | None
+    cancel_at_period_end: bool
+    can_manage: bool
+
+
 class MeRead(BaseModel):
     user: UserRead
     usage: UsageRead
+    subscription: SubscriptionRead | None = None
 
 
 def usage_read(usage: Usage) -> UsageRead:
@@ -73,6 +83,15 @@ def usage_read(usage: Usage) -> UsageRead:
         max_active_jobs=usage.max_active_jobs,
         max_preset=usage.max_preset,
         presets=list(usage.presets),
+    )
+
+
+def me_read(session: Session, user: User) -> MeRead:
+    summary = billing.subscription_summary(session, user)
+    return MeRead(
+        user=UserRead.from_user(user),
+        usage=usage_read(plan_usage(session, user, None)),
+        subscription=SubscriptionRead(**summary) if summary else None,
     )
 
 
@@ -130,7 +149,7 @@ def register(
     purge_expired_sessions(session)
     token = create_session(session, user, ip, request.headers.get("user-agent"))
     _set_session_cookie(response, token)
-    return MeRead(user=UserRead.from_user(user), usage=usage_read(plan_usage(session, user, None)))
+    return me_read(session, user)
 
 
 @router.post("/login", response_model=MeRead)
@@ -154,7 +173,7 @@ def login(
     purge_expired_sessions(session)
     token = create_session(session, user, ip, request.headers.get("user-agent"))
     _set_session_cookie(response, token)
-    return MeRead(user=UserRead.from_user(user), usage=usage_read(plan_usage(session, user, None)))
+    return me_read(session, user)
 
 
 @router.post("/logout", status_code=204)
@@ -174,7 +193,7 @@ def me(
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ) -> MeRead:
-    return MeRead(user=UserRead.from_user(user), usage=usage_read(plan_usage(session, user, None)))
+    return me_read(session, user)
 
 
 def config_payload() -> dict[str, Any]:
@@ -187,5 +206,25 @@ def config_payload() -> dict[str, Any]:
             "anon_max_preset": settings.anon_max_preset or None,
             "max_filesize_mb": settings.max_filesize_mb,
             "retention_seconds": settings.retention_seconds,
+        },
+        "billing": {
+            "enabled": settings.billing_enabled,
+            "provider": "paddle",
+            "environment": "production" if settings.paddle_env == "production" else "sandbox",
+            "client_token": settings.paddle_client_token if settings.billing_enabled else "",
+            "currency": settings.billing_currency,
+            "prices": {
+                "month": billing.price_label("month"),
+                "year": billing.price_label("year"),
+            },
+            "available": {
+                "month": bool(settings.paddle_price_pro_monthly),
+                "year": bool(settings.paddle_price_pro_yearly),
+            },
+            "pro": {
+                "jobs_per_hour": settings.pro_jobs_per_user_hour,
+                "max_active_jobs": settings.pro_max_active_jobs,
+                "max_filesize_mb": settings.pro_max_filesize_mb,
+            },
         },
     }

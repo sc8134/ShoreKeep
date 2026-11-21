@@ -28,8 +28,10 @@ logger = logging.getLogger(__name__)
 
 
 class Reporter:
-    def __init__(self, job_id: str) -> None:
+    def __init__(self, job_id: str, max_bytes: int | None = None) -> None:
         self.job_id = job_id
+        self.max_bytes = max_bytes if max_bytes and max_bytes > 0 else settings.max_filesize_bytes
+        self.max_filesize_mb = round(self.max_bytes / (1024 * 1024)) if self.max_bytes > 0 else 0
         self._last_write = 0.0
         self._last_percent = 0.0
         self._started = time.monotonic()
@@ -100,12 +102,12 @@ class Reporter:
         return callback
 
     def _enforce_limits(self, downloaded: int, total: int | None) -> None:
-        limit = settings.max_filesize_bytes
+        limit = self.max_bytes
         if limit > 0:
             if total and total > limit:
-                raise SizeLimitExceeded(f"File is larger than the {settings.max_filesize_mb} MB limit")
+                raise SizeLimitExceeded(f"File is larger than the {self.max_filesize_mb} MB limit")
             if downloaded > limit:
-                raise SizeLimitExceeded(f"Download exceeded the {settings.max_filesize_mb} MB limit")
+                raise SizeLimitExceeded(f"Download exceeded the {self.max_filesize_mb} MB limit")
         if settings.job_timeout_seconds > 0 and time.monotonic() - self._started > settings.job_timeout_seconds:
             raise JobTimeout(f"Job exceeded the {settings.job_timeout_seconds}s time limit")
 
@@ -146,8 +148,9 @@ def run_job(job_id: str) -> None:
             return
         url, preset, cookies_enc = job.url, job.preset, job.cookies_enc
         want_subtitles = bool(job.want_subtitles)
+        limit_mb = job.max_filesize_mb or settings.max_filesize_mb
 
-    reporter = Reporter(job_id)
+    reporter = Reporter(job_id, limit_mb * 1024 * 1024)
     work = settings.work_dir / job_id
     cookie_text: str | None = None
     cookie_file: str | None = None
@@ -186,7 +189,7 @@ def run_job(job_id: str) -> None:
                 if not entries:
                     raise PlaylistEmpty("This playlist has no downloadable videos.")
                 info = extract_info(entry_url(entries[0]) or url, cookiefile=cookie_file)
-            plan = build_plan(info, preset, settings.max_filesize_bytes)
+            plan = build_plan(info, preset, reporter.max_bytes)
 
         if cookie_text:
             apply_to_plan(plan, cookie_text)
@@ -300,7 +303,7 @@ def _download_playlist_item(
         plan = direct_plan(url, preset)
     else:
         info = extract_info(url, cookiefile=cookie_file)
-        plan = build_plan(info, preset, settings.max_filesize_bytes)
+        plan = build_plan(info, preset, reporter.max_bytes)
     if cookie_text:
         apply_to_plan(plan, cookie_text)
 
@@ -362,7 +365,7 @@ def _download_with_refresh(
         refreshed = build_plan(
             extract_info(plan.webpage_url, cookiefile=cookiefile),
             plan.preset,
-            settings.max_filesize_bytes,
+            reporter.max_bytes,
         )
         if cookie_text:
             apply_to_plan(refreshed, cookie_text)

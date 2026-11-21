@@ -19,6 +19,7 @@ class PlanInfo:
     jobs_per_hour: int
     max_active_jobs: int
     max_preset: str | None
+    max_filesize_mb: int
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ def plan_for(user: User | None) -> PlanInfo:
             jobs_per_hour=settings.anon_jobs_per_ip_hour,
             max_active_jobs=settings.anon_max_active_jobs,
             max_preset=settings.anon_max_preset or None,
+            max_filesize_mb=settings.max_filesize_mb,
         )
     if user.plan == "pro":
         return PlanInfo(
@@ -45,12 +47,14 @@ def plan_for(user: User | None) -> PlanInfo:
             jobs_per_hour=settings.pro_jobs_per_user_hour,
             max_active_jobs=settings.pro_max_active_jobs,
             max_preset=None,
+            max_filesize_mb=max(settings.max_filesize_mb, settings.pro_max_filesize_mb),
         )
     return PlanInfo(
         name="free",
         jobs_per_hour=settings.free_jobs_per_user_hour,
         max_active_jobs=settings.free_max_active_jobs,
         max_preset=None,
+        max_filesize_mb=settings.max_filesize_mb,
     )
 
 

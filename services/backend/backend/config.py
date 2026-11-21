@@ -45,6 +45,19 @@ class Settings(BaseSettings):
     agent_pair_ttl_seconds: int = 300
     desktop_usage_retention_days: int = 30
 
+    # Billing: Paddle Billing (merchant of record, international cards)
+    paddle_env: str = "sandbox"
+    paddle_api_key: str = ""
+    paddle_client_token: str = ""
+    paddle_webhook_secret: str = ""
+    paddle_price_pro_monthly: str = ""
+    paddle_price_pro_yearly: str = ""
+    pro_price_monthly_usd: int = 5
+    pro_price_yearly_usd: int = 45
+    billing_currency: str = "USD"
+    # Pro perk: larger per-file cap than the free tier
+    pro_max_filesize_mb: int = 4096
+
     r2_bucket: str = ""
     r2_endpoint: str = ""
     r2_access_key: str = ""
@@ -69,6 +82,25 @@ class Settings(BaseSettings):
     @property
     def playlist_max_total_bytes(self) -> int:
         return self.playlist_max_total_mb * 1024 * 1024
+
+    @property
+    def pro_max_filesize_bytes(self) -> int:
+        return self.pro_max_filesize_mb * 1024 * 1024
+
+    @property
+    def paddle_api_base(self) -> str:
+        if self.paddle_env == "production":
+            return "https://api.paddle.com"
+        return "https://sandbox-api.paddle.com"
+
+    @property
+    def billing_enabled(self) -> bool:
+        return bool(
+            self.paddle_api_key
+            and self.paddle_client_token
+            and self.paddle_webhook_secret
+            and self.paddle_price_pro_monthly
+        )
 
 
 settings = Settings()

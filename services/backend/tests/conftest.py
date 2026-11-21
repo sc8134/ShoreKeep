@@ -14,8 +14,10 @@ from backend.models import (  # noqa: E402
     AgentDevice,
     AgentPair,
     AuthSession,
+    BillingEvent,
     DesktopJob,
     Job,
+    Subscription,
     User,
 )
 from backend.ratelimit import SlidingWindowLimiter  # noqa: E402
@@ -27,6 +29,8 @@ def _wipe() -> None:
         session.exec(delete(Job))
         session.exec(delete(AgentPair))
         session.exec(delete(AgentDevice))
+        session.exec(delete(BillingEvent))
+        session.exec(delete(Subscription))
         session.exec(delete(AuthSession))
         session.exec(delete(User))
         session.commit()
@@ -35,6 +39,7 @@ def _wipe() -> None:
 def _reset_limiters() -> None:
     from backend.api import agent as agent_api
     from backend.api import auth as auth_api
+    from backend.api import billing as billing_api
     from backend.api import jobs as jobs_api
     from backend.config import settings
 
@@ -46,6 +51,7 @@ def _reset_limiters() -> None:
     auth_api.login_limiter = SlidingWindowLimiter(20, 900)
     agent_api.pair_limiter = SlidingWindowLimiter(10, 3600)
     agent_api.claim_limiter = SlidingWindowLimiter(30, 900)
+    billing_api.checkout_limiter = SlidingWindowLimiter(10, 900)
 
 
 @pytest.fixture(autouse=True)
