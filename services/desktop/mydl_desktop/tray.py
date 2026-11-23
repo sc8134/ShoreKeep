@@ -111,14 +111,26 @@ def run_tray(
     lock = threading.RLock()
     stopping = threading.Event()
     budget = _RestartBudget()
-    state = {"online": False, "paused": False, "active": 0, "paired": False}
+    state = {
+        "online": False,
+        "paused": False,
+        "active": 0,
+        "paired": False,
+        "jobs": [],
+        "last_event": None,
+        "last_event_id": None,
+    }
     initial = health()
     if initial:
+        event = initial.get("last_event") or {}
         state.update(
             online=True,
             paused=bool(initial.get("paused")),
             active=int(initial.get("active") or 0),
             paired=bool(initial.get("paired")),
+            jobs=list(initial.get("active_jobs") or []),
+            last_event=event or None,
+            last_event_id=event.get("id"),
         )
 
     def refresh_state(info: dict | None = None) -> None:
@@ -129,9 +141,18 @@ def run_tray(
                 paused=bool(info.get("paused")),
                 active=int(info.get("active") or 0),
                 paired=bool(info.get("paired")),
+                jobs=list(info.get("active_jobs") or []),
+                last_event=info.get("last_event"),
             )
         else:
             state["online"] = False
+            state["jobs"] = []
+
+    def average_progress() -> int:
+        jobs = state["jobs"]
+        if not jobs:
+            return 0
+        return round(sum(float(job.get("progress") or 0) for job in jobs) / len(jobs))
 
     def status_text(_item) -> str:
         if not state["online"]:
@@ -142,10 +163,49 @@ def run_tray(
             return "Agent: paused"
         if state["active"]:
             label = "download" if state["active"] == 1 else "downloads"
-            return f"Agent: {state['active']} {label}"
+            return f"Agent: {state['active']} {label} ({average_progress()}%)"
         if not state["paired"]:
             return "Agent: ready (not paired)"
         return "Agent: ready"
+
+    def job_line() -> str:
+        jobs = state["jobs"]
+        if not jobs:
+            return ""
+        if len(jobs) == 1:
+            job = jobs[0]
+            title = str(job.get("title") or "Download").strip()
+            if len(title) > 38:
+                title = title[:37] + "…"
+            return f"{title}: {round(float(job.get('progress') or 0))}%"
+        return f"{len(jobs)} downloads in progress: {average_progress()}%"
+
+    def progress_text(_item) -> str:
+        return job_line()
+
+    def progress_visible(_item) -> bool:
+        return bool(state["jobs"])
+
+    def tooltip() -> str:
+        if not state["online"]:
+            return "Shorekeep: starting"
+        if state["jobs"]:
+            return f"Shorekeep: {job_line()}"
+        if state["paused"]:
+            return "Shorekeep: downloads paused"
+        return "Shorekeep"
+
+    def announce(icon) -> None:
+        event = state.get("last_event") or {}
+        event_id = event.get("id")
+        if not event_id or event_id == state.get("last_event_id"):
+            return
+        state["last_event_id"] = event_id
+        title = str(event.get("title") or "Download").strip()
+        if event.get("status") == "done":
+            _notify(icon, f"Finished: {title}")
+        else:
+            _notify(icon, f"Failed: {title}")
 
     def open_folder(_icon, _item) -> None:
         path = config.download_path
@@ -249,10 +309,18 @@ def run_tray(
                 else:
                     _notify(icon, "The Shorekeep window keeps closing unexpectedly. See window.log.")
 
+            icon.title = tooltip()
+            announce(icon)
+            marker = (state["online"], state["paused"], job_line())
+            if state.get("_marker") != marker:
+                state["_marker"] = marker
+                icon.update_menu()
+
             stopping.wait(10)
 
     menu = Menu(
         MenuItem(status_text, None, enabled=False),
+        MenuItem(progress_text, None, enabled=False, visible=progress_visible),
         MenuItem(pause_label, toggle_pause),
         MenuItem("Open download folder", open_folder),
         MenuItem("Open Shorekeep", open_site),
@@ -260,12 +328,21 @@ def run_tray(
         MenuItem("Quit", quit_app),
     )
     icon = pystray.Icon("shorekeep-desktop", icon_image(64), "Shorekeep", menu)
+    hotkey = None
+    if config.hotkey:
+        from .hotkey import HotkeyListener
+
+        hotkey = HotkeyListener(config.hotkey, lambda: open_site(icon, None))
+        if hotkey.start():
+            logger.info("global hotkey %s opens the window", config.hotkey)
     monitor = threading.Thread(target=supervise, args=(icon,), name="tray-supervisor", daemon=True)
     monitor.start()
     try:
         icon.run()
     finally:
         stopping.set()
+        if hotkey is not None:
+            hotkey.stop()
         with lock:
             _stop(window_child)
             _stop(child)

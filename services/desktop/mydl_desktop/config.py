@@ -39,6 +39,7 @@ class AgentConfig:
     allowed_origins: list[str] = field(default_factory=lambda: list(DEFAULT_ORIGINS))
     idle_timeout_minutes: int = 30
     state_dir: str = ""
+    hotkey: str = "ctrl+alt+s"
 
     @property
     def download_path(self) -> Path:
@@ -86,6 +87,8 @@ class AgentConfig:
                 for origin in os.environ["SHOREKEEP_ALLOWED_ORIGINS"].split(",")
                 if origin.strip()
             ]
+        if os.environ.get("SHOREKEEP_HOTKEY"):
+            config.hotkey = os.environ["SHOREKEEP_HOTKEY"]
         if config.cookie_browser not in COOKIE_MODES:
             config.cookie_browser = "auto"
         return config

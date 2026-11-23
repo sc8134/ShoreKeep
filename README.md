@@ -128,7 +128,8 @@ Pasting `cookies.txt` is too much to ask of non-technical users, so the web app 
 - downloads with the same hybrid engine (yt-dlp extraction + MY-DL transfer + ffmpeg) and saves to `~/Downloads/Shorekeep`;
 - reads the user's own browser cookies **on demand**, only when a site actually asks for a login, and never sends them to the server;
 - is reachable only on `127.0.0.1:47821` and only from configured web origins;
-- reserves each download with the API before starting, so desktop and cloud jobs share one hourly quota and one concurrency cap.
+- reserves each download with the API before starting, so desktop and cloud jobs share one hourly quota and one concurrency cap;
+- keeps a local activity log of finished and failed downloads, shown in the page's history and Activity panel, with a **Show in folder** action for saved files.
 
 ### Setup (Windows, macOS, Linux)
 
@@ -173,7 +174,7 @@ bash infra/linux/build.sh
 
 Windows produces:
 
-- `dist\Shorekeep\Shorekeep.exe`: the portable app. Launched normally it starts the bundled web app (API, UI, and worker) on `http://127.0.0.1:8000`, opens a native window against it, and keeps a tray icon; it also starts or reuses the local download agent and handles `shorekeep://` links. Launching it again raises the existing window. The tray menu shows live status, can pause and resume new downloads, and restarts the agent, web app, or window if one stops. The same UI stays available in any browser at `http://127.0.0.1:8000`;
+- `dist\Shorekeep\Shorekeep.exe`: the portable app. Launched normally it starts the bundled web app (API, UI, and worker) on `http://127.0.0.1:8000`, opens a native window against it, and keeps a tray icon; it also starts or reuses the local download agent and handles `shorekeep://` links. Launching it again raises the existing window. The tray menu shows live status, can pause and resume new downloads, and restarts the agent, web app, or window if one stops. The window title shows live progress, the tray tooltip follows the active download, and finished or failed downloads raise a tray notification. Drag a link (or a small `.txt` file containing one) onto the page to start a download, and press `Ctrl+Alt+S` to raise the window. The same UI stays available in any browser at `http://127.0.0.1:8000`;
 - `dist\installer\Shorekeep-Setup-<version>.exe`: the self-extracting setup;
 - `dist\installer\SHA256SUMS.txt`: checksums for the installers.
 
@@ -217,9 +218,10 @@ The wave-S mark, PNG sizes, tray silhouette, favicon, ICO, and lockups live in `
 | `cookie_browser` | `auto` | `auto`, `firefox`, `chrome`, `edge`, `brave`, or `off` |
 | `allowed_origins` | `http://127.0.0.1:8000`, `http://localhost:8000` | Web origins allowed to call the agent (add your deployed origin) |
 | `idle_timeout_minutes` | `30` | Agent exits after this long with no jobs/requests |
-| `state_dir` | `%APPDATA%\Shorekeep` | Where the usage outbox (`outbox.jsonl`) is kept |
+| `state_dir` | `%APPDATA%\Shorekeep` | Where the usage outbox (`outbox.jsonl`) and activity log (`activity.json`) are kept |
+| `hotkey` | `ctrl+alt+s` | Global shortcut that opens the window; `off` disables it (Windows only) |
 
-Environment overrides: `SHOREKEEP_SERVER`, `SHOREKEEP_DOWNLOAD_DIR`, `SHOREKEEP_ALLOWED_ORIGINS` (comma-separated).
+Environment overrides: `SHOREKEEP_SERVER`, `SHOREKEEP_DOWNLOAD_DIR`, `SHOREKEEP_ALLOWED_ORIGINS` (comma-separated), `SHOREKEEP_HOTKEY`.
 
 ### Browser support (important)
 
@@ -229,7 +231,7 @@ Firefox is the reliable browser for automatic cookies: their store is not encryp
 
 Desktop and cloud downloads draw from the same counters. For each job the agent first calls `POST /v1/agent/jobs`; the server enforces the plan preset, the hourly limit, and the concurrent-job cap (both include cloud jobs in progress) before the agent touches the network. On success or failure the agent reports `PUT /v1/agent/jobs/{job_id}` with the final status and size. Only the URL's host is stored (`desktopjob.host`), never media, cookies, or full URLs. If the API is briefly unreachable the agent still downloads and queues the usage event locally; the event is replayed every minute and counted then (the upsert means a job is recorded exactly once). Running reservations from a crashed agent stop counting as active after `JOB_TIMEOUT_SECONDS`, and records older than `DESKTOP_USAGE_RETENTION_DAYS` are pruned.
 
-The web UI's usage line (from `/v1/auth/me`) therefore includes desktop downloads, and desktop history still appears as **on device** (the agent keeps its job list in memory, so it resets when the agent restarts).
+The web UI's usage line (from `/v1/auth/me`) therefore includes desktop downloads, and desktop history still appears as **on device**. Finished and failed downloads are kept in a local activity log (`activity.json` under `state_dir`), so the page's history and Activity panel survive agent restarts; only in-flight jobs are held in memory.
 
 ## Bot protection (Turnstile)
 
@@ -321,7 +323,7 @@ See `.env.example`. Notable knobs:
 .venv/Scripts/python.exe -m pytest services/backend/tests -q
 ```
 
-145 tests cover format planning/routing, size caps (including the per-job Pro cap), DRM/playlist rejection, playlist ZIP building, subtitle selection, HLS subtitle merging, chapter parsing, the error taxonomy, URL safety (SSRF), rate limiting, auth/sessions, quotas, job ownership, CSRF origin checks, Turnstile gating, cookie parsing/encryption, agent pairing, job flows, shared cloud/desktop metering (idempotent reserves, concurrency, stale reservations, offline replay), billing (Paddle checkout gating, webhook signatures and idempotency, subscription activation/cancellation, lazy expiry, portal links), demo-mode caps, version consistency across packages and installers, cross-platform URL registration, and the desktop agent (host guard, local pairing, plan gating, SSRF). Desktop tests are skipped automatically if the `mydl_desktop` package is not installed. `conftest.py` points `DATA_DIR` at a temp directory so tests never touch your dev database.
+183 tests cover format planning/routing, size caps (including the per-job Pro cap), DRM/playlist rejection, playlist ZIP building, subtitle selection, HLS subtitle merging, chapter parsing, the error taxonomy, URL safety (SSRF), rate limiting, auth/sessions, quotas, job ownership, CSRF origin checks, Turnstile gating, cookie parsing/encryption, agent pairing, job flows, shared cloud/desktop metering (idempotent reserves, concurrency, stale reservations, offline replay), billing (Paddle checkout gating, webhook signatures and idempotency, subscription activation/cancellation, lazy expiry, portal links), demo-mode caps, version consistency across packages and installers, cross-platform URL registration, and the desktop agent (host guard, local pairing, plan gating, SSRF, pause/resume, activity persistence, safe reveal paths, title progress formatting, hotkey parsing). Desktop tests are skipped automatically if the `mydl_desktop` package is not installed. `conftest.py` points `DATA_DIR` at a temp directory so tests never touch your dev database.
 
 CI runs the same suite on every push and pull request (`.github/workflows/ci.yml`). A scheduled workflow (`.github/workflows/ytdlp-update.yml`) checks PyPI every Monday, bumps the `yt-dlp` floor in both packages, runs the suite against that exact release, and opens a pull request when a newer version exists.
 
@@ -376,7 +378,7 @@ Proprietary, all rights reserved. See [LICENSE](LICENSE).
 - Turnstile is off by default; enable it (with `SECRET_KEY` set) before exposing the API publicly
 - Billing needs a public deployment because Paddle delivers webhooks over HTTPS; the local and desktop builds run with billing disabled. Paddle must also approve the checkout domain, and the `$5`/`$45` labels are display-only values that must match the prices configured in Paddle
 - Desktop cookie extraction depends on the browser: Firefox works; Chromium 127+ App-Bound Encryption often blocks it. Device tokens are not revocable from the UI yet. Signed Windows installers, macOS and Linux bundles, and a release workflow exist, but macOS/Linux builds are best effort and have not been exercised on every distro
-- Desktop job history is in memory in the agent (gone on restart); files themselves remain on disk. Metering is cooperative: the server enforces quota for the shipped agent, but a modified client could under-report (it runs on the user's machine). Usage reports queued while offline are replayed later, so a job can land in a later hour bucket
+- In-flight desktop jobs are in memory in the agent and reset on restart; finished and failed jobs persist in the local activity log, and files remain on disk. Metering is cooperative: the server enforces quota for the shipped agent, but a modified client could under-report (it runs on the user's machine). Usage reports queued while offline are replayed later, so a job can land in a later hour bucket
 - SSRF guard blocks private/loopback targets at enqueue and before MY-DL transfers; production should still enforce egress firewall rules (redirect-based SSRF via yt-dlp extractors is not fully covered)
 
 ## Reliability safeguards

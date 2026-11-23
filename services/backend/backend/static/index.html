@@ -594,6 +594,65 @@
   .history a { color: var(--oxblood); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; text-decoration: none; flex: none; border-bottom: 1px solid rgba(125, 44, 31, 0.4); }
   .history a:hover { color: var(--oxblood-dark); border-bottom-color: var(--oxblood-dark); }
   .history .empty { color: var(--muted); font-size: 13px; font-style: italic; border-bottom: 0; }
+  .history button.link {
+    background: none; border: 0; padding: 0; cursor: pointer;
+    font-family: var(--font-body); color: var(--oxblood); font-size: 11px;
+    letter-spacing: 0.08em; text-transform: uppercase; flex: none;
+    border-bottom: 1px solid rgba(125, 44, 31, 0.4);
+  }
+  .history button.link:hover { color: var(--oxblood-dark); border-bottom-color: var(--oxblood-dark); }
+  .activity-btn { position: relative; }
+  .activity-count {
+    display: inline-block; min-width: 15px; margin-left: 6px; padding: 0 4px;
+    border-radius: 8px; background: var(--oxblood); color: #f6ecd7;
+    font-size: 9.5px; letter-spacing: 0.02em; line-height: 15px; text-align: center;
+  }
+  .drop-overlay {
+    position: fixed; inset: 0; z-index: 60; pointer-events: none;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(28, 18, 10, 0.68);
+  }
+  .drop-overlay[hidden] { display: none; }
+  .drop-card {
+    pointer-events: none; text-align: center; padding: 34px 46px;
+    border: 2px dashed rgba(246, 236, 215, 0.7); border-radius: 4px;
+    background: rgba(43, 33, 24, 0.55); color: #f6ecd7;
+    box-shadow: 0 24px 60px rgba(20, 12, 5, 0.55);
+  }
+  .drop-card strong {
+    display: block; font-family: var(--font-display); font-size: 17px;
+    letter-spacing: 0.14em; text-transform: uppercase; color: #f0d08a;
+  }
+  .drop-card span { display: block; margin-top: 8px; font-size: 12.5px; color: #e7dcc3; }
+  .activity { width: min(92vw, 480px); }
+  .activity-list {
+    list-style: none; margin: 0 0 6px; padding: 0;
+    max-height: 48vh; overflow-y: auto;
+  }
+  .activity-list li {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 0; border-bottom: 1px solid var(--line-soft); font-size: 12.5px;
+  }
+  .activity-list li:last-child { border-bottom: 0; }
+  .activity-list .aname {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; color: var(--ink-soft);
+  }
+  .activity-list .astatus {
+    font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--muted); flex: none;
+  }
+  .activity-list .astatus.done { color: var(--ok); }
+  .activity-list .astatus.failed { color: var(--danger); }
+  .activity-list .atime { color: var(--muted); font-size: 10.5px; flex: none; }
+  .activity-list .empty { color: var(--muted); font-size: 13px; font-style: italic; border-bottom: 0; }
+  .activity-list button.link {
+    background: none; border: 0; padding: 0; cursor: pointer;
+    font-family: var(--font-body); color: var(--oxblood); font-size: 10.5px;
+    letter-spacing: 0.08em; text-transform: uppercase; flex: none;
+    border-bottom: 1px solid rgba(125, 44, 31, 0.4);
+  }
+  .activity-list button.link:hover { color: var(--oxblood-dark); border-bottom-color: var(--oxblood-dark); }
   footer {
     margin-top: clamp(12px, 2.4vh, 24px);
     padding: clamp(12px, 2vh, 18px) 24px clamp(11px, 1.8vh, 16px);
@@ -774,9 +833,16 @@
   </div>
   <div class="dust"></div>
 </div>
+<div class="drop-overlay" id="drop-overlay" hidden>
+  <div class="drop-card">
+    <strong>Drop to download</strong>
+    <span>Release a link or a .txt file with a link</span>
+  </div>
+</div>
 <div class="shell">
   <div class="topbar">
     <div class="account" id="account">
+      <button class="ghost activity-btn" id="activity-open" type="button" hidden>Activity<span class="activity-count" id="activity-count" hidden>0</span></button>
       <button class="app-pill offline" id="agent-pill" type="button" hidden>Shorekeep app</button>
       <span class="who" id="who" hidden></span>
       <span class="quota" id="quota" hidden></span>
@@ -907,7 +973,7 @@
   </section>
 
   <section class="card history" id="history">
-    <h2>Recent downloads</h2>
+    <h2>Download history</h2>
     <ul id="history-list"></ul>
   </section>
 
@@ -917,6 +983,16 @@
     <div>Built by <a href="https://www.sagarrc.com.np" target="_blank" rel="noopener noreferrer">Sagar RC</a></div>
   </footer>
 </div>
+
+<dialog id="activity-dialog" class="activity">
+  <h2>Activity</h2>
+  <p class="hint">Finished and failed downloads from this device, newest first.</p>
+  <ul id="activity-list" class="activity-list"></ul>
+  <p class="auth-error" id="activity-error"></p>
+  <div class="auth-actions">
+    <button class="ghost" id="activity-close" type="button">Close</button>
+  </div>
+</dialog>
 
 <dialog id="auth-dialog">
   <h2 id="auth-title">Sign in</h2>
@@ -994,6 +1070,13 @@
   const signoutBtn = document.getElementById("signout");
   const historyBox = document.getElementById("history");
   const historyList = document.getElementById("history-list");
+  const activityOpen = document.getElementById("activity-open");
+  const activityCount = document.getElementById("activity-count");
+  const activityDialog = document.getElementById("activity-dialog");
+  const activityList = document.getElementById("activity-list");
+  const activityClose = document.getElementById("activity-close");
+  const activityError = document.getElementById("activity-error");
+  const dropOverlay = document.getElementById("drop-overlay");
   const appSubmit = document.getElementById("app-submit");
   const agentPill = document.getElementById("agent-pill");
   const appPanel = document.getElementById("app-panel");
@@ -1063,6 +1146,7 @@
   let agent = null;
   let agentKey = null;
   let agentWaitTimer = null;
+  let dragDepth = 0;
 
   chips.forEach(function (chip) {
     chip.addEventListener("click", function () {
@@ -1147,6 +1231,7 @@
     statSize.textContent = "";
     statSpeed.textContent = "";
     statEta.textContent = "";
+    document.title = "Shorekeep";
   }
 
   function render(job) {
@@ -1158,6 +1243,9 @@
       : stageLabel;
     statProgress.textContent = Math.round(job.progress || 0) + "%";
     barFill.style.width = (job.progress || 0) + "%";
+    document.title = TERMINAL.has(job.status)
+      ? "Shorekeep"
+      : Math.round(job.progress || 0) + "% · " + (job.title || "Shorekeep");
 
     if (job.engine) {
       engineBadge.hidden = false;
@@ -1248,6 +1336,7 @@
       stopTracking();
       loadMe();
       loadHistory();
+      refreshActivity();
     }
   }
 
@@ -1287,6 +1376,110 @@
     }
   }
 
+  async function fetchActivity(limit) {
+    const result = await agentApi("/v1/activity?limit=" + (limit || 20), {}, 3000);
+    return result.ok && Array.isArray(result.body) ? result.body : null;
+  }
+
+  function relativeTime(value) {
+    const then = Date.parse(value || "");
+    if (!isFinite(then)) return "";
+    const seconds = Math.max(0, Math.round((Date.now() - then) / 1000));
+    if (seconds < 45) return "just now";
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return minutes + " min ago";
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return hours + " h ago";
+    return formatShortDate(value);
+  }
+
+  async function refreshActivity() {
+    const events = await fetchActivity(30);
+    if (!events) {
+      activityOpen.hidden = true;
+      return null;
+    }
+    activityOpen.hidden = false;
+    let seen = 0;
+    try { seen = Number(localStorage.getItem("shorekeep.activity.seen") || 0); } catch (e) { seen = 0; }
+    const unread = events.filter(function (event) {
+      const stamp = Date.parse(event.finished_at || "");
+      return isFinite(stamp) && stamp > seen;
+    }).length;
+    activityCount.hidden = unread === 0;
+    activityCount.textContent = unread > 9 ? "9+" : String(unread);
+    return events;
+  }
+
+  function renderActivity(events) {
+    activityList.textContent = "";
+    if (!events.length) {
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = "Nothing yet. Finished downloads appear here.";
+      activityList.appendChild(li);
+      return;
+    }
+    events.forEach(function (event) {
+      const li = document.createElement("li");
+      const name = document.createElement("span");
+      name.className = "aname";
+      name.textContent = event.title || event.output_name || event.url || "Download";
+      if (event.error) name.title = event.error;
+      li.appendChild(name);
+      const status = document.createElement("span");
+      status.className = "astatus " + event.status;
+      status.textContent = event.status === "done" ? "Finished" : "Failed";
+      li.appendChild(status);
+      if (event.status === "done" && event.output_name) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "link";
+        button.textContent = "Show in folder";
+        button.addEventListener("click", function () { revealActivity(event.id); });
+        li.appendChild(button);
+      }
+      const when = document.createElement("span");
+      when.className = "atime";
+      when.textContent = relativeTime(event.finished_at);
+      li.appendChild(when);
+      activityList.appendChild(li);
+    });
+  }
+
+  async function openActivity() {
+    activityError.classList.remove("visible");
+    activityError.textContent = "";
+    const events = await refreshActivity();
+    renderActivity(events || []);
+    try { localStorage.setItem("shorekeep.activity.seen", String(Date.now())); } catch (e) { /* storage may be blocked */ }
+    activityCount.hidden = true;
+    if (typeof activityDialog.showModal === "function") activityDialog.showModal();
+    else activityDialog.setAttribute("open", "");
+  }
+
+  async function revealActivity(id) {
+    const result = await agentApi("/v1/activity/reveal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Shorekeep-Control": "ui" },
+      body: JSON.stringify({ id: id })
+    }, 4000);
+    if (!result.ok) {
+      const detail = result.body && result.body.detail;
+      activityError.textContent = typeof detail === "string" ? detail : "Could not open the file.";
+      activityError.classList.add("visible");
+    } else {
+      activityError.classList.remove("visible");
+      activityError.textContent = "";
+    }
+  }
+
+  activityOpen.addEventListener("click", openActivity);
+  activityClose.addEventListener("click", function () {
+    if (typeof activityDialog.close === "function") activityDialog.close();
+    else activityDialog.removeAttribute("open");
+  });
+
   function updateAgentPill(online) {
     agentPill.hidden = false;
     agentPill.className = "app-pill " + (online ? "online" : "offline");
@@ -1318,6 +1511,8 @@
       agentState.textContent = "Shorekeep app connected. Downloads save to " + (agent.download_dir || "your Downloads folder") + ".";
       renderBrowsers(agent.browsers);
       if (!showPanel) hideAppPanel();
+      loadHistory();
+      refreshActivity();
       return agent;
     }
     agent = null;
@@ -1712,30 +1907,55 @@
     const result = await api("/v1/auth/me");
     me = result.ok && result.body ? result.body : null;
     renderAccount();
-    if (me) loadHistory(); else hideHistory();
+    loadHistory();
     return me;
   }
 
-  function hideHistory() {
-    historyBox.classList.remove("visible");
-    historyList.textContent = "";
-  }
-
   async function loadHistory() {
-    if (!me) return;
-    const result = await api("/v1/jobs?limit=8");
-    let jobs = result.ok && Array.isArray(result.body) ? result.body.slice() : [];
+    let jobs = [];
+    if (me) {
+      const result = await api("/v1/jobs?limit=10");
+      if (result.ok && Array.isArray(result.body)) jobs = result.body.slice();
+    }
     if (agentKey) {
-      const local = await agentApi("/v1/jobs?limit=8", { headers: { "X-Agent-Key": agentKey } }, 4000);
+      const local = await agentApi("/v1/jobs?limit=10", { headers: { "X-Agent-Key": agentKey } }, 4000);
       if (local.ok && Array.isArray(local.body)) {
         const seen = new Set(jobs.map(function (job) { return job.id; }));
         jobs = jobs.concat(local.body.filter(function (job) { return !seen.has(job.id); }));
-        jobs.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
       } else if (local.status === 401) {
         agentKey = null;
       }
     }
-    jobs = jobs.slice(0, 8);
+    const activity = await fetchActivity(20);
+    if (activity) {
+      const seen = new Set(jobs.map(function (job) { return job.id; }));
+      activity.forEach(function (entry) {
+        if (seen.has(entry.id)) return;
+        jobs.push({
+          id: entry.id,
+          url: entry.url,
+          title: entry.title,
+          status: entry.status,
+          client: "desktop",
+          saved_to: entry.saved_to,
+          output_name: entry.output_name,
+          output_size: entry.output_size,
+          error: entry.error,
+          created_at: entry.finished_at,
+          finished_at: entry.finished_at,
+          local: true
+        });
+      });
+    }
+    if (!jobs.length && !me && !agent) {
+      historyBox.classList.remove("visible");
+      historyList.textContent = "";
+      return;
+    }
+    jobs.sort(function (a, b) {
+      return new Date(b.finished_at || b.created_at) - new Date(a.finished_at || a.created_at);
+    });
+    jobs = jobs.slice(0, 10);
     historyList.textContent = "";
     if (!jobs.length) {
       const li = document.createElement("li");
@@ -1748,6 +1968,7 @@
       const name = document.createElement("span");
       name.className = "hname";
       name.textContent = job.title || job.output_name || job.url;
+      if (job.status === "failed" && job.error) name.title = job.error;
       const status = document.createElement("span");
       status.className = "hstatus " + job.status;
       status.textContent = STAGE_LABELS[job.status] || job.status;
@@ -1767,6 +1988,13 @@
         link.setAttribute("download", job.output_name || "");
         if (job.client === "desktop") link.target = "_blank";
         li.appendChild(link);
+      } else if (job.status === "done" && job.local && job.output_name) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "link";
+        button.textContent = "Show in folder";
+        button.addEventListener("click", function () { revealActivity(job.id); });
+        li.appendChild(button);
       }
       historyList.appendChild(li);
     });
@@ -1846,7 +2074,7 @@
     await api("/v1/auth/logout", { method: "POST" });
     me = null;
     agentKey = null;
-    hideHistory();
+    loadHistory();
     renderAccount();
   });
 
@@ -1949,11 +2177,88 @@
     }
   });
 
+  function hasDropPayload(event) {
+    const types = event.dataTransfer && event.dataTransfer.types;
+    if (!types) return false;
+    const list = Array.prototype.slice.call(types);
+    return list.indexOf("Files") !== -1 || list.indexOf("text/uri-list") !== -1 || list.indexOf("text/plain") !== -1;
+  }
+
+  function firstUrl(text) {
+    const match = String(text || "").match(/https?:\/\/[^\s"'<>]+/i);
+    return match ? match[0].replace(/[),.;]+$/, "") : "";
+  }
+
+  async function droppedUrl(dataTransfer) {
+    if (!dataTransfer) return "";
+    const uris = dataTransfer.getData("text/uri-list");
+    if (uris) {
+      const lines = uris.split(/\r?\n/)
+        .map(function (line) { return line.trim(); })
+        .filter(function (line) { return line && line.charAt(0) !== "#"; });
+      if (lines.length) return firstUrl(lines[0]);
+    }
+    const text = firstUrl(dataTransfer.getData("text/plain"));
+    if (text) return text;
+    const file = dataTransfer.files && dataTransfer.files[0];
+    if (file && file.size < 256 * 1024 && (file.type === "text/plain" || /\.txt$/i.test(file.name))) {
+      try { return firstUrl(await file.text()); } catch (e) { return ""; }
+    }
+    return "";
+  }
+
+  function startDropped(url) {
+    if (!url) {
+      jobBox.classList.add("visible");
+      titleEl.textContent = "No link found";
+      setError("That drop did not contain an http or https link.", false);
+      return;
+    }
+    urlInput.value = url;
+    if (me && agent && agent.ok) submitViaApp();
+    else form.requestSubmit();
+  }
+
+  window.addEventListener("dragenter", function (event) {
+    if (!hasDropPayload(event)) return;
+    event.preventDefault();
+    dragDepth += 1;
+    dropOverlay.hidden = false;
+  });
+  window.addEventListener("dragover", function (event) {
+    if (!hasDropPayload(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+  });
+  window.addEventListener("dragleave", function () {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) dropOverlay.hidden = true;
+  });
+  window.addEventListener("drop", async function (event) {
+    if (!hasDropPayload(event)) return;
+    event.preventDefault();
+    dragDepth = 0;
+    dropOverlay.hidden = true;
+    const url = await droppedUrl(event.dataTransfer);
+    startDropped(url);
+  });
+  window.addEventListener("dragend", function () {
+    dragDepth = 0;
+    dropOverlay.hidden = true;
+  });
+
   async function boot() {
     await loadConfig();
     await loadMe();
     applyPresetGating();
-    checkAgent(false);
+    await checkAgent(false);
+    refreshActivity();
+    setInterval(function () {
+      if (!document.hidden) refreshActivity();
+    }, 15000);
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) refreshActivity();
+    });
   }
 
   boot();

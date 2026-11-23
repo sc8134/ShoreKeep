@@ -67,3 +67,14 @@ def open_path(path: Path | str) -> None:
         subprocess.Popen(["open", target])
     else:
         subprocess.Popen(["xdg-open", target])
+
+
+def reveal_path(path: Path | str) -> None:
+    """Show a file in the system file manager, selecting it when supported."""
+    target = Path(path)
+    if os.name == "nt":
+        subprocess.Popen(["explorer", f"/select,{target}"])
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", str(target)])
+    else:
+        subprocess.Popen(["xdg-open", str(target.parent if target.is_file() else target)])

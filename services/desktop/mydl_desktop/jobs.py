@@ -31,6 +31,7 @@ from backend.engine.subs import chapters_from, chapters_text, fetch_subtitle
 from backend.engine.types import PlaylistEmpty
 
 from . import metering
+from .activity import ActivityStore
 from .config import AGENT_HOST, AGENT_PORT, AgentConfig
 from .cookies import cookie_candidates, export_cookies
 
@@ -145,6 +146,7 @@ class JobManager:
         self.max_workers = max_workers
         self.last_activity = time.monotonic()
         self._paused = threading.Event()
+        self.activity = ActivityStore(config.state_path / "activity.json")
 
     def touch(self) -> None:
         self.last_activity = time.monotonic()
@@ -162,6 +164,24 @@ class JobManager:
     def active_count(self) -> int:
         with self._lock:
             return sum(1 for job in self._jobs.values() if job.status in ACTIVE_STATUSES)
+
+    def active_jobs(self, limit: int = 5) -> list[dict[str, Any]]:
+        with self._lock:
+            jobs = [job for job in self._jobs.values() if job.status in ACTIVE_STATUSES]
+            jobs.sort(key=lambda job: job.created_at)
+            return [
+                {
+                    "id": job.id,
+                    "title": job.title or job.url,
+                    "stage": job.stage,
+                    "progress": job.progress,
+                    "speed_bps": job.speed_bps,
+                    "eta_seconds": job.eta_seconds,
+                    "downloaded_bytes": job.downloaded_bytes,
+                    "total_bytes": job.total_bytes,
+                }
+                for job in jobs[:limit]
+            ]
 
     def ensure_capacity(self) -> None:
         with self._lock:
@@ -340,6 +360,7 @@ class JobManager:
                 finished_at=utcnow(),
             )
         finally:
+            self._record(job)
             metering.complete(
                 self.config,
                 job_id=job.id,
@@ -352,6 +373,25 @@ class JobManager:
             )
             shutil.rmtree(work, ignore_errors=True)
             self.touch()
+
+    def _record(self, job: LocalJob) -> None:
+        self.activity.record(
+            {
+                "id": job.id,
+                "url": job.url,
+                "title": job.title or job.output_name or job.url,
+                "status": job.status if job.status in TERMINAL_STATUSES else "failed",
+                "preset": job.preset,
+                "output_name": job.output_name,
+                "output_path": job.output_path,
+                "output_size": job.output_size,
+                "playlist_count": job.playlist_count,
+                "error": job.error,
+                "error_code": job.error_code,
+                "saved_to": job.download_dir,
+                "finished_at": (job.finished_at or utcnow()).isoformat(),
+            }
+        )
 
     def _plan(
         self, job: LocalJob, work: Path, cookie_browser: str

@@ -24,8 +24,11 @@ def agent_client(tmp_path, monkeypatch):
         state_dir=str(tmp_path / "state"),
         device_token="device-token",
     )
-    app = create_app(config, JobManager(config))
+    manager = JobManager(config)
+    app = create_app(config, manager)
     with TestClient(app, base_url="http://127.0.0.1:47821") as client:
+        client.manager = manager
+        client.agent_config = config
         yield client
 
 
@@ -130,6 +133,161 @@ def test_run_requires_re_pairing_when_the_device_token_is_revoked(agent_client, 
     )
     assert response.status_code == 401
     assert "no longer paired" in response.json()["detail"]
+
+
+def test_health_reports_active_jobs_and_last_event(agent_client):
+    from mydl_desktop.jobs import LocalJob
+
+    config = agent_client.agent_config
+    job = LocalJob(
+        id="activejob01",
+        url="https://example.com/video",
+        preset="best",
+        user_id="u1",
+        user_email="desk@example.com",
+        download_dir=str(config.download_path),
+        status="downloading",
+        stage="downloading",
+        progress=42.5,
+        title="An in-flight video",
+    )
+    agent_client.manager._jobs[job.id] = job
+
+    body = agent_client.get("/health").json()
+    assert body["active"] == 1
+    assert body["active_jobs"][0]["id"] == "activejob01"
+    assert body["active_jobs"][0]["progress"] == 42.5
+    assert body["last_event"] is None
+
+    agent_client.manager.activity.record(
+        {"id": "finished01", "title": "Done video", "status": "done"}
+    )
+    event = agent_client.get("/health").json()["last_event"]
+    assert event["id"] == "finished01"
+    assert event["title"] == "Done video"
+    assert event["status"] == "done"
+    assert event["finished_at"]
+
+
+def test_activity_lists_entries_without_output_paths(agent_client):
+    store = agent_client.manager.activity
+    for index in range(3):
+        store.record(
+            {
+                "id": f"activity{index}",
+                "title": f"Video {index}",
+                "status": "done",
+                "output_path": f"/downloads/video-{index}.mp4",
+            }
+        )
+
+    response = agent_client.get("/v1/activity?limit=2")
+    assert response.status_code == 200
+    entries = response.json()
+    assert [entry["id"] for entry in entries] == ["activity2", "activity1"]
+    assert all("output_path" not in entry for entry in entries)
+
+
+def test_activity_requires_no_pairing(agent_client):
+    assert agent_client.get("/v1/activity").status_code == 200
+
+
+def test_reveal_requires_local_control(agent_client):
+    response = agent_client.post("/v1/activity/reveal", json={"id": "anything"})
+    assert response.status_code == 403
+
+    response = agent_client.post(
+        "/v1/activity/reveal",
+        json={"id": "anything"},
+        headers={"X-Shorekeep-Control": "web"},
+    )
+    assert response.status_code == 403
+
+
+def test_pause_accepts_the_ui_control_value(agent_client):
+    paused = agent_client.post("/v1/pause", headers={"X-Shorekeep-Control": "ui"})
+    assert paused.status_code == 200
+    assert paused.json()["paused"] is True
+    agent_client.post("/v1/resume", headers={"X-Shorekeep-Control": "ui"})
+
+
+def test_reveal_reports_unknown_and_fileless_downloads(agent_client):
+    response = agent_client.post(
+        "/v1/activity/reveal",
+        json={"id": "missing"},
+        headers={"X-Shorekeep-Control": "ui"},
+    )
+    assert response.status_code == 404
+
+    agent_client.manager.activity.record({"id": "failedone", "status": "failed"})
+    response = agent_client.post(
+        "/v1/activity/reveal",
+        json={"id": "failedone"},
+        headers={"X-Shorekeep-Control": "ui"},
+    )
+    assert response.status_code == 404
+
+
+def test_reveal_refuses_files_outside_the_download_folder(agent_client, tmp_path, monkeypatch):
+    from mydl_desktop import server as server_module
+
+    opened: list = []
+    monkeypatch.setattr(server_module, "reveal_path", opened.append)
+    outside = tmp_path / "elsewhere.mp4"
+    outside.write_bytes(b"content")
+    agent_client.manager.activity.record(
+        {"id": "outside01", "status": "done", "output_path": str(outside)}
+    )
+
+    response = agent_client.post(
+        "/v1/activity/reveal",
+        json={"id": "outside01"},
+        headers={"X-Shorekeep-Control": "ui"},
+    )
+    assert response.status_code == 403
+    assert opened == []
+
+
+def test_reveal_reports_files_that_were_moved(agent_client, monkeypatch):
+    from mydl_desktop import server as server_module
+
+    opened: list = []
+    monkeypatch.setattr(server_module, "reveal_path", opened.append)
+    target = agent_client.agent_config.download_path / "gone.mp4"
+    agent_client.manager.activity.record(
+        {"id": "gonejob01", "status": "done", "output_path": str(target)}
+    )
+
+    response = agent_client.post(
+        "/v1/activity/reveal",
+        json={"id": "gonejob01"},
+        headers={"X-Shorekeep-Control": "ui"},
+    )
+    assert response.status_code == 410
+    assert opened == []
+
+
+def test_reveal_opens_files_inside_the_download_folder(agent_client, monkeypatch):
+    from mydl_desktop import server as server_module
+
+    opened: list = []
+    monkeypatch.setattr(server_module, "reveal_path", opened.append)
+    root = agent_client.agent_config.download_path
+    root.mkdir(parents=True, exist_ok=True)
+    target = root / "clip.mp4"
+    target.write_bytes(b"content")
+    agent_client.manager.activity.record(
+        {"id": "revealjob1", "title": "Clip", "status": "done", "output_path": str(target)}
+    )
+
+    response = agent_client.post(
+        "/v1/activity/reveal",
+        json={"id": "revealjob1"},
+        headers={"X-Shorekeep-Control": "ui"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == {"ok": True}
+    assert opened == [target]
 
 
 def test_run_queues_usage_when_the_server_is_unreachable(agent_client, monkeypatch):

@@ -1,22 +1,27 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 import os
 import subprocess
 import sys
+import threading
 import time
+import urllib.error
+import urllib.request
 import webbrowser
 from pathlib import Path
 
 from . import webapp
-from .config import AgentConfig, config_dir
+from .config import AGENT_HOST, AGENT_PORT, AgentConfig, config_dir
 from .control import FocusChannel, request_focus
 from .platform_utils import SingleInstance
 
 logger = logging.getLogger(__name__)
 
 WINDOW_TITLE = "Shorekeep"
+AGENT_BASE = f"http://{AGENT_HOST}:{AGENT_PORT}"
 _instance: SingleInstance | None = None
 
 
@@ -27,22 +32,39 @@ def _focus_native() -> bool:
             from ctypes import wintypes
 
             user32 = ctypes.windll.user32
-            user32.FindWindowW.restype = wintypes.HWND
-            user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
             user32.GetWindowThreadProcessId.argtypes = [
                 wintypes.HWND,
                 ctypes.POINTER(wintypes.DWORD),
             ]
             user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
             user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+            user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+            user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+            user32.IsWindowVisible.argtypes = [wintypes.HWND]
 
-            handle = user32.FindWindowW(None, WINDOW_TITLE)
-            if not handle:
+            pid = os.getpid()
+            found: list[int] = []
+            callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+            def visit(handle, _lparam):
+                owner = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(handle, ctypes.byref(owner))
+                if owner.value != pid or not user32.IsWindowVisible(handle):
+                    return True
+                length = user32.GetWindowTextLengthW(handle)
+                if length <= 0:
+                    return True
+                buffer = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(handle, buffer, length + 1)
+                if buffer.value.startswith(WINDOW_TITLE):
+                    found.append(handle)
+                    return False
+                return True
+
+            user32.EnumWindows(callback_type(visit), 0)
+            if not found:
                 return False
-            owner = wintypes.DWORD()
-            user32.GetWindowThreadProcessId(handle, ctypes.byref(owner))
-            if owner.value != os.getpid():
-                return False
+            handle = found[0]
             user32.ShowWindow(handle, 9)  # SW_RESTORE
             return bool(user32.SetForegroundWindow(handle))
         except Exception:
@@ -62,7 +84,7 @@ def _focus_native() -> bool:
             return False
     commands = (
         ["wmctrl", "-a", WINDOW_TITLE],
-        ["xdotool", "search", "--name", f"^{WINDOW_TITLE}$", "windowactivate"],
+        ["xdotool", "search", "--name", f"^{WINDOW_TITLE}", "windowactivate"],
     )
     for command in commands:
         try:
@@ -170,6 +192,51 @@ def focus_running(config: AgentConfig, timeout: float = 2.0) -> bool:
     return False
 
 
+class _TitleWatcher:
+    """Keeps the native title showing live download progress from the local agent."""
+
+    def __init__(self, window, interval: float = 3.0) -> None:
+        self.window = window
+        self.interval = interval
+        self._stop = threading.Event()
+
+    def start(self) -> None:
+        threading.Thread(target=self._loop, name="window-title", daemon=True).start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _loop(self) -> None:
+        while not self._stop.wait(self.interval):
+            title = self._title()
+            try:
+                if title and self.window.title != title:
+                    self.window.title = title
+            except Exception:
+                logger.debug("could not update the window title", exc_info=True)
+
+    def _title(self) -> str:
+        try:
+            with urllib.request.urlopen(f"{AGENT_BASE}/health", timeout=1.5) as response:
+                info = json.load(response)
+        except (urllib.error.URLError, OSError, ValueError):
+            return WINDOW_TITLE
+        jobs = info.get("active_jobs") or []
+        if jobs:
+            percent = round(
+                sum(float(job.get("progress") or 0) for job in jobs) / len(jobs)
+            )
+            if len(jobs) == 1:
+                name = str(jobs[0].get("title") or "Download").strip()
+                if len(name) > 34:
+                    name = name[:33] + "…"
+                return f"{WINDOW_TITLE} · {percent}% · {name}"
+            return f"{WINDOW_TITLE} · {percent}% · {len(jobs)} downloads"
+        if info.get("paused"):
+            return f"{WINDOW_TITLE} (paused)"
+        return WINDOW_TITLE
+
+
 def main(config: AgentConfig) -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -187,6 +254,7 @@ def main(config: AgentConfig) -> int:
         return 0
 
     channel = FocusChannel(config.state_path / "window.control")
+    watcher: _TitleWatcher | None = None
     try:
         import webview
 
@@ -194,7 +262,7 @@ def main(config: AgentConfig) -> int:
         # in the finished-job popup even though it works in a regular browser.
         webview.settings["ALLOW_DOWNLOADS"] = True
 
-        webview.create_window(
+        native = webview.create_window(
             WINDOW_TITLE,
             config.server_base,
             width=1280,
@@ -202,10 +270,14 @@ def main(config: AgentConfig) -> int:
             min_size=(900, 600),
         )
         channel.start(focus_existing)
+        watcher = _TitleWatcher(native)
+        watcher.start()
         webview.start(gui=_gui())
     except Exception:
         logger.exception("the native window failed to start")
         return 1
     finally:
+        if watcher is not None:
+            watcher.stop()
         channel.close()
     return 0

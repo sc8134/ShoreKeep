@@ -10,6 +10,12 @@ Notable changes to Shorekeep. The format follows [Keep a Changelog](https://keep
 - The tray menu can pause and resume new downloads. Downloads already running finish, and paused launches are rejected cleanly.
 - The tray supervises the desktop agent, the local web app, and the window. It restarts them after a crash with a restart budget and shows a notification when a service keeps stopping.
 - The tray menu now shows live status: starting, ready, paused, and the number of active downloads.
+- The native window title shows live download progress and pause state, and the tray tooltip follows the active download.
+- Finished and failed downloads raise a tray notification, and the tray menu lists the current download with its progress.
+- Completed desktop downloads are recorded in a local activity log that survives restarts. The web page merges them into the download history and adds an Activity panel with an unread count.
+- **Show in folder** opens the saved file from the page. The agent only reveals files inside the download folder and requires the local control header.
+- Drag a link, or a small `.txt` file containing one, onto the page to start a download.
+- `Ctrl+Alt+S` opens the Shorekeep window from anywhere on Windows. The shortcut is configurable with the `hotkey` setting or `SHOREKEEP_HOTKEY`.
 
 ### Fixed
 

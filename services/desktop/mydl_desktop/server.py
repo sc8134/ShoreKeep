@@ -24,12 +24,14 @@ from . import __version__, metering
 from .config import AGENT_HOST, AGENT_PORT, AgentConfig
 from .cookies import probe_browsers
 from .jobs import JobBusy, JobManager, JobPaused
+from .platform_utils import reveal_path
 
 logger = logging.getLogger(__name__)
 
 ALLOWED_HOSTS = {f"{AGENT_HOST}:{AGENT_PORT}", f"localhost:{AGENT_PORT}"}
 PRESETS = {"best", "1080p", "720p", "480p", "audio"}
 JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+CONTROL_VALUES = {"tray", "ui"}
 
 
 class RunRequest(BaseModel):
@@ -38,6 +40,10 @@ class RunRequest(BaseModel):
     subtitles: bool = False
     job_id: str | None = None
     cookie_browser: str | None = None
+
+
+class RevealRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
 
 
 class PairRegistry:
@@ -116,7 +122,7 @@ def create_app(config: AgentConfig, manager: JobManager) -> FastAPI:
         CORSMiddleware,
         allow_origins=config.allowed_origins,
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Content-Type", "X-Agent-Key"],
+        allow_headers=["Content-Type", "X-Agent-Key", "X-Shorekeep-Control"],
         allow_credentials=False,
         max_age=600,
     )
@@ -155,6 +161,7 @@ def create_app(config: AgentConfig, manager: JobManager) -> FastAPI:
 
     @app.get("/health")
     def health() -> dict[str, Any]:
+        latest = manager.activity.latest()
         return {
             "ok": True,
             "app": "shorekeep-desktop",
@@ -162,23 +169,60 @@ def create_app(config: AgentConfig, manager: JobManager) -> FastAPI:
             "paired": bool(config.device_token),
             "paused": manager.paused(),
             "active": manager.active_count(),
+            "active_jobs": manager.active_jobs(limit=3),
+            "last_event": (
+                {
+                    "id": latest.get("id"),
+                    "title": latest.get("title"),
+                    "status": latest.get("status"),
+                    "finished_at": latest.get("finished_at"),
+                }
+                if latest
+                else None
+            ),
             "download_dir": str(config.download_path),
             "browsers": probe_browsers(),
         }
 
-    def require_tray(control: str = Header(default="", alias="X-Shorekeep-Control")) -> None:
-        if control != "tray":
-            raise HTTPException(status_code=403, detail="Local tray control only")
+    def require_control(
+        control: str = Header(default="", alias="X-Shorekeep-Control"),
+    ) -> None:
+        if control not in CONTROL_VALUES:
+            raise HTTPException(status_code=403, detail="Local Shorekeep control only")
 
     @app.post("/v1/pause")
-    def pause(_: None = Depends(require_tray)) -> dict[str, Any]:
+    def pause(_: None = Depends(require_control)) -> dict[str, Any]:
         manager.set_paused(True)
         return {"paused": True, "active": manager.active_count()}
 
     @app.post("/v1/resume")
-    def resume(_: None = Depends(require_tray)) -> dict[str, Any]:
+    def resume(_: None = Depends(require_control)) -> dict[str, Any]:
         manager.set_paused(False)
         return {"paused": False, "active": manager.active_count()}
+
+    @app.get("/v1/activity")
+    def activity(limit: int = 20) -> list[dict[str, Any]]:
+        entries = manager.activity.list(max(1, min(limit, 100)))
+        for entry in entries:
+            entry.pop("output_path", None)
+        return entries
+
+    @app.post("/v1/activity/reveal")
+    def reveal(
+        payload: RevealRequest,
+        _: None = Depends(require_control),
+    ) -> dict[str, Any]:
+        entry = manager.activity.find(payload.id)
+        if entry is None or not entry.get("output_path"):
+            raise HTTPException(status_code=404, detail="Download not found")
+        root = config.download_path.resolve()
+        target = Path(entry["output_path"]).resolve()
+        if root != target and root not in target.parents:
+            raise HTTPException(status_code=403, detail="File is outside the download folder")
+        if not target.exists():
+            raise HTTPException(status_code=410, detail="File was moved or deleted")
+        reveal_path(target)
+        return {"ok": True}
 
     @app.get("/v1/me")
     def me(identity: dict[str, Any] = Depends(require_pair)) -> dict[str, Any]:
