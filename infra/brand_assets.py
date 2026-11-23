@@ -1,19 +1,74 @@
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
-FONT = Path("C:/Windows/Fonts/seguisb.ttf")
 MASTER = ROOT / "assets" / "brand" / "shorekeep-icon.png"
 TRAY = ROOT / "assets" / "brand" / "shorekeep-seal.png"
 SIZES = (512, 256, 192, 128, 64, 48, 32, 24, 16)
 
+FONT_CANDIDATES = (
+    "C:/Windows/Fonts/seguisb.ttf",
+    "C:/Windows/Fonts/segoeuib.ttf",
+    "/System/Library/Fonts/Supplemental/Georgia Bold.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/Library/Fonts/Arial Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation2/LiberationSerif-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/local/share/fonts/DejaVuSans-Bold.ttf",
+)
+FONT_DIRS = (
+    Path("/usr/share/fonts"),
+    Path("/usr/local/share/fonts"),
+    Path.home() / ".fonts",
+    Path.home() / "Library" / "Fonts",
+)
+
+
+def font_path() -> Path | None:
+    override = os.environ.get("SHOREKEEP_FONT")
+    if override:
+        path = Path(override).expanduser()
+        if path.is_file():
+            return path
+        raise SystemExit(f"SHOREKEEP_FONT does not point at a font file: {path}")
+    for candidate in FONT_CANDIDATES:
+        path = Path(candidate)
+        if path.is_file():
+            return path
+    for directory in FONT_DIRS:
+        if not directory.is_dir():
+            continue
+        matches = sorted(directory.rglob("*Bold*.ttf"))
+        if matches:
+            return matches[0]
+    return None
+
+
+def load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    path = font_path()
+    if path is None:
+        print("warning: no bold TrueType font found, using Pillow default", file=sys.stderr)
+        try:
+            return ImageFont.load_default(size=size)
+        except TypeError:
+            return ImageFont.load_default()
+    return ImageFont.truetype(str(path), size)
+
 
 def lockup(master: Image.Image, path: Path, color: tuple[int, int, int, int]) -> None:
     icon = master.resize((200, 200), Image.LANCZOS)
-    font = ImageFont.truetype(str(FONT), 128)
+    font = load_font(128)
     text = "Shorekeep"
     spacing = 2
     width = sum(font.getlength(char) for char in text) + spacing * (len(text) - 1)
