@@ -19,6 +19,7 @@ def agent_client(tmp_path, monkeypatch):
         }
 
     monkeypatch.setattr(PairRegistry, "_claim", fake_claim)
+    monkeypatch.setattr("mydl_desktop.config.config_dir", lambda: tmp_path)
     config = AgentConfig(
         download_dir=str(tmp_path / "downloads"),
         state_dir=str(tmp_path / "state"),
@@ -319,3 +320,107 @@ def test_run_queues_usage_when_the_server_is_unreachable(agent_client, monkeypat
     )
     assert response.status_code == 201, response.text
     assert queued["job_id"] == "offline-job-1"
+
+
+def test_pending_requires_local_control(agent_client):
+    assert agent_client.get("/v1/pending").status_code == 403
+    clear = agent_client.post("/v1/pending/clear", json={"id": "detected-1"})
+    assert clear.status_code == 403
+
+
+def test_detected_link_flows_through_pending_and_clears(agent_client):
+    detected = agent_client.post(
+        "/v1/detected",
+        json={"url": "https://example.com/watch?v=1", "source": "clipboard"},
+        headers={"X-Shorekeep-Control": "tray"},
+    )
+    assert detected.status_code == 201, detected.text
+    entry = detected.json()
+    assert entry["id"] == "detected-1"
+    assert entry["source"] == "clipboard"
+
+    assert agent_client.get("/health").json()["pending"]["id"] == "detected-1"
+    pending = agent_client.get("/v1/pending", headers={"X-Shorekeep-Control": "ui"})
+    assert pending.status_code == 200
+    assert pending.json()["url"] == "https://example.com/watch?v=1"
+
+    stale = agent_client.post(
+        "/v1/pending/clear",
+        json={"id": "detected-999"},
+        headers={"X-Shorekeep-Control": "ui"},
+    )
+    assert stale.json() == {"ok": False}
+
+    cleared = agent_client.post(
+        "/v1/pending/clear",
+        json={"id": "detected-1"},
+        headers={"X-Shorekeep-Control": "ui"},
+    )
+    assert cleared.json() == {"ok": True}
+    assert agent_client.get("/v1/pending", headers={"X-Shorekeep-Control": "ui"}).json() is None
+    assert agent_client.get("/health").json()["pending"] is None
+
+
+def test_detected_rejects_non_http_targets(agent_client):
+    response = agent_client.post(
+        "/v1/detected",
+        json={"url": "ftp://example.com/file", "source": "clipboard"},
+        headers={"X-Shorekeep-Control": "tray"},
+    )
+    assert response.status_code == 400
+
+
+def test_settings_get_defaults_and_update(agent_client, tmp_path):
+    settings = agent_client.get("/v1/settings", headers={"X-Shorekeep-Control": "ui"})
+    assert settings.status_code == 200
+    body = settings.json()
+    assert body["clipboard_monitor"] is False
+    assert body["watch_folder"] == ""
+    assert body["hotkey"] == "ctrl+alt+s"
+
+    folder = tmp_path / "intake"
+    updated = agent_client.post(
+        "/v1/settings",
+        json={"clipboard_monitor": True, "watch_folder": str(folder)},
+        headers={"X-Shorekeep-Control": "ui"},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["clipboard_monitor"] is True
+    assert updated.json()["watch_folder"] == str(folder)
+    assert folder.is_dir()
+
+    again = agent_client.get("/v1/settings", headers={"X-Shorekeep-Control": "tray"}).json()
+    assert again["clipboard_monitor"] is True
+    assert again["watch_folder"] == str(folder)
+
+    saved = AgentConfig.load()
+    assert saved.clipboard_monitor is True
+    assert saved.watch_folder == str(folder)
+
+
+def test_settings_reject_a_file_as_the_watch_folder(agent_client, tmp_path):
+    target = tmp_path / "notafolder"
+    target.write_text("x", encoding="utf-8")
+    response = agent_client.post(
+        "/v1/settings",
+        json={"watch_folder": str(target)},
+        headers={"X-Shorekeep-Control": "ui"},
+    )
+    assert response.status_code == 400
+
+
+def test_settings_can_turn_detection_off(agent_client, tmp_path):
+    agent_client.post(
+        "/v1/settings",
+        json={"clipboard_monitor": True, "watch_folder": str(tmp_path / "intake")},
+        headers={"X-Shorekeep-Control": "ui"},
+    )
+    response = agent_client.post(
+        "/v1/settings",
+        json={"clipboard_monitor": False, "watch_folder": ""},
+        headers={"X-Shorekeep-Control": "ui"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["clipboard_monitor"] is False
+    assert body["watch_folder"] == ""

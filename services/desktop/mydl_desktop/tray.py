@@ -9,6 +9,7 @@ import urllib.error
 import urllib.request
 import webbrowser
 
+from . import detect
 from .config import AGENT_HOST, AGENT_PORT, AgentConfig
 from .platform_utils import SingleInstance, open_path
 
@@ -73,6 +74,22 @@ def _control(action: str) -> bool:
         return False
 
 
+def _post_detected(url: str, source: str) -> dict | None:
+    payload = json.dumps({"url": url, "source": source}).encode("utf-8")
+    request = urllib.request.Request(
+        f"{AGENT_BASE}/v1/detected",
+        data=payload,
+        headers={**CONTROL_HEADERS, "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=3) as response:
+            return json.load(response)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        logger.warning("could not record a detected link: %s", exc)
+        return None
+
+
 class _RestartBudget:
     def __init__(self) -> None:
         self._attempts: dict[str, list[float]] = {}
@@ -119,6 +136,7 @@ def run_tray(
         "jobs": [],
         "last_event": None,
         "last_event_id": None,
+        "pending": None,
     }
     initial = health()
     if initial:
@@ -131,6 +149,7 @@ def run_tray(
             jobs=list(initial.get("active_jobs") or []),
             last_event=event or None,
             last_event_id=event.get("id"),
+            pending=initial.get("pending"),
         )
 
     def refresh_state(info: dict | None = None) -> None:
@@ -143,6 +162,7 @@ def run_tray(
                 paired=bool(info.get("paired")),
                 jobs=list(info.get("active_jobs") or []),
                 last_event=info.get("last_event"),
+                pending=info.get("pending"),
             )
         else:
             state["online"] = False
@@ -194,6 +214,27 @@ def run_tray(
         if state["paused"]:
             return "Shorekeep: downloads paused"
         return "Shorekeep"
+
+    def pending_visible(_item) -> bool:
+        return bool(state.get("pending"))
+
+    def pending_text(_item) -> str:
+        pending = state.get("pending") or {}
+        if pending.get("source") == "clipboard":
+            return "Review copied link"
+        return "Review link from watch folder"
+
+    def on_link(url: str, source: str) -> None:
+        entry = _post_detected(url, source)
+        if entry is None:
+            return
+        state["pending"] = entry
+        _notify(icon, f"Link detected from {source}. Review it in Shorekeep.")
+        try:
+            icon.update_menu()
+        except Exception:
+            logger.exception("could not refresh the tray menu")
+        window.focus_running(config)
 
     def announce(icon) -> None:
         event = state.get("last_event") or {}
@@ -309,18 +350,25 @@ def run_tray(
                 else:
                     _notify(icon, "The Shorekeep window keeps closing unexpectedly. See window.log.")
 
+            try:
+                runner.apply(AgentConfig.load())
+            except Exception:
+                logger.exception("could not apply the link detection settings")
+
             icon.title = tooltip()
             announce(icon)
-            marker = (state["online"], state["paused"], job_line())
+            pending = state.get("pending") or {}
+            marker = (state["online"], state["paused"], job_line(), pending.get("id"))
             if state.get("_marker") != marker:
                 state["_marker"] = marker
                 icon.update_menu()
 
-            stopping.wait(10)
+            stopping.wait(5)
 
     menu = Menu(
         MenuItem(status_text, None, enabled=False),
         MenuItem(progress_text, None, enabled=False, visible=progress_visible),
+        MenuItem(pending_text, open_site, visible=pending_visible),
         MenuItem(pause_label, toggle_pause),
         MenuItem("Open download folder", open_folder),
         MenuItem("Open Shorekeep", open_site),
@@ -328,6 +376,9 @@ def run_tray(
         MenuItem("Quit", quit_app),
     )
     icon = pystray.Icon("shorekeep-desktop", icon_image(64), "Shorekeep", menu)
+    runner = detect.DetectionRunner(config)
+    runner.configure(on_link)
+    runner.apply(config)
     hotkey = None
     if config.hotkey:
         from .hotkey import HotkeyListener
@@ -341,6 +392,7 @@ def run_tray(
         icon.run()
     finally:
         stopping.set()
+        runner.stop()
         if hotkey is not None:
             hotkey.stop()
         with lock:

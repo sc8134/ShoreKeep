@@ -16,6 +16,9 @@ Notable changes to Shorekeep. The format follows [Keep a Changelog](https://keep
 - **Show in folder** opens the saved file from the page. The agent only reveals files inside the download folder and requires the local control header.
 - Drag a link, or a small `.txt` file containing one, onto the page to start a download.
 - `Ctrl+Alt+S` opens the Shorekeep window from anywhere on Windows. The shortcut is configurable with the `hotkey` setting or `SHOREKEEP_HOTKEY`.
+- Opt-in link detection: watch the clipboard or a folder for new links. A detected link fills the URL box with a short hint, the tray offers **Review copied link** or **Review link from watch folder**, and nothing downloads until the user clicks Download.
+- The page gains a **Link detection** panel that saves the clipboard and watch folder settings through the agent. The agent keeps running while detection is on.
+- The watch folder scans `.txt`, `.url`, and `.webloc` files, remembers each file's size and mtime in `watch.json`, and ignores files larger than 256 KB.
 
 ### Fixed
 

@@ -13,7 +13,7 @@ Shorekeep is a video/audio download platform with a hybrid engine. The product i
 - **ffmpeg** muxes/remuxes (`-c copy` where possible) and extracts MP3 audio
 - **FastAPI** API and single-page UI, with SSE progress and a DB-polling worker; **SQLite** locally, **Postgres** in production via Alembic
 
-Status: **0.4.2, production track**. Single jobs and playlists, presets, progress streaming, auto-expiry, email/password accounts, free-tier limits, optional Turnstile, encrypted per-job cookies, VTT subtitles and chapter metadata, structured error codes, an optional desktop app for Windows, macOS, and Linux with automatic browser cookies and server-enforced metering, Paddle billing for Pro ($5/month or $45/year, 4 GB files), Postgres with advisory-lock quotas and `SKIP LOCKED` claiming, a public demo mode, Render/Fly/Docker deploy configs, and signed, checksummed desktop releases. Next: priority queue, billing polish, and a browser extension for Chromium cookies.
+Status: **0.4.2, production track**. Single jobs and playlists, presets, progress streaming, auto-expiry, email/password accounts, free-tier limits, optional Turnstile, encrypted per-job cookies, VTT subtitles and chapter metadata, structured error codes, an optional desktop app for Windows, macOS, and Linux with automatic browser cookies, opt-in clipboard and watch folder link detection, and server-enforced metering, Paddle billing for Pro ($5/month or $45/year, 4 GB files), Postgres with advisory-lock quotas and `SKIP LOCKED` claiming, a public demo mode, Render/Fly/Docker deploy configs, and signed, checksummed desktop releases. Next: priority queue, billing polish, and a browser extension for Chromium cookies.
 
 See [CHANGELOG.md](CHANGELOG.md) for release history.
 
@@ -129,7 +129,8 @@ Pasting `cookies.txt` is too much to ask of non-technical users, so the web app 
 - reads the user's own browser cookies **on demand**, only when a site actually asks for a login, and never sends them to the server;
 - is reachable only on `127.0.0.1:47821` and only from configured web origins;
 - reserves each download with the API before starting, so desktop and cloud jobs share one hourly quota and one concurrency cap;
-- keeps a local activity log of finished and failed downloads, shown in the page's history and Activity panel, with a **Show in folder** action for saved files.
+- keeps a local activity log of finished and failed downloads, shown in the page's history and Activity panel, with a **Show in folder** action for saved files;
+- can watch the clipboard or a folder for links (off by default) and prefill the URL box, but never starts a download on its own.
 
 ### Setup (Windows, macOS, Linux)
 
@@ -154,6 +155,14 @@ python -m mydl_desktop.agent --unregister # remove the shorekeep:// handler
 ```
 
 If the URL handler is unavailable, start `--serve` manually and keep the site's origin in `allowed_origins`.
+
+### Link detection (opt-in)
+
+Open **Link detection** under the URL box to turn on clipboard monitoring or choose a watch folder. Both are off by default. When a link is found, the tray shows **Review copied link** or **Review link from watch folder**, sends a notification, and opens the window. The page fills the URL box and shows a short hint; nothing downloads until the user clicks **Download**, so the usual plan, quota, and SSRF checks still apply.
+
+- Clipboard monitoring never leaves the machine and only reacts to newly copied text.
+- The watch folder scans `.txt`, `.url`, and `.webloc` files, remembers each file's last-seen size and mtime in `watch.json` under `state_dir`, and ignores files larger than 256 KB. Files already present when the folder is added are treated as new on the first scan.
+- Settings are saved through the agent (`/v1/settings`) and picked up by the tray within a few seconds. The agent stays running while detection is on so links are not missed.
 
 ### Builds and installers
 
@@ -218,10 +227,12 @@ The wave-S mark, PNG sizes, tray silhouette, favicon, ICO, and lockups live in `
 | `cookie_browser` | `auto` | `auto`, `firefox`, `chrome`, `edge`, `brave`, or `off` |
 | `allowed_origins` | `http://127.0.0.1:8000`, `http://localhost:8000` | Web origins allowed to call the agent (add your deployed origin) |
 | `idle_timeout_minutes` | `30` | Agent exits after this long with no jobs/requests |
-| `state_dir` | `%APPDATA%\Shorekeep` | Where the usage outbox (`outbox.jsonl`) and activity log (`activity.json`) are kept |
+| `state_dir` | `%APPDATA%\Shorekeep` | Where the usage outbox (`outbox.jsonl`), activity log (`activity.json`), and watch folder state (`watch.json`) are kept |
 | `hotkey` | `ctrl+alt+s` | Global shortcut that opens the window; `off` disables it (Windows only) |
+| `clipboard_monitor` | `false` | Watch the clipboard for new links and offer them in the page (review required) |
+| `watch_folder` | `""` | Folder scanned for `.txt`, `.url`, and `.webloc` links; empty turns it off |
 
-Environment overrides: `SHOREKEEP_SERVER`, `SHOREKEEP_DOWNLOAD_DIR`, `SHOREKEEP_ALLOWED_ORIGINS` (comma-separated), `SHOREKEEP_HOTKEY`.
+Environment overrides: `SHOREKEEP_SERVER`, `SHOREKEEP_DOWNLOAD_DIR`, `SHOREKEEP_ALLOWED_ORIGINS` (comma-separated), `SHOREKEEP_HOTKEY`, `SHOREKEEP_CLIPBOARD` (`1`/`true`/`yes`/`on`), `SHOREKEEP_WATCH_FOLDER`.
 
 ### Browser support (important)
 
@@ -281,7 +292,7 @@ Open http://127.0.0.1:8000, paste a link, pick a preset. Accounts, quota, and hi
 | POST | `/v1/billing/webhook` | Paddle webhooks (signature verified, idempotent) |
 | GET | `/v1/health` | Liveness |
 
-The desktop agent itself exposes `GET /health`, `GET /v1/me`, `POST /v1/run`, `GET /v1/jobs`, `GET /v1/jobs/{id}`, and `GET /v1/jobs/{id}/file?key=` on `127.0.0.1:47821`.
+The desktop agent itself exposes `GET /health`, `GET /v1/me`, `POST /v1/run`, `GET /v1/jobs`, `GET /v1/jobs/{id}`, `GET /v1/jobs/{id}/file?key=`, the local-only `/v1/activity` and `/v1/activity/reveal`, and the local-only detection endpoints `/v1/pending`, `/v1/pending/clear`, `POST /v1/detected`, and `/v1/settings` on `127.0.0.1:47821`.
 
 Anonymous jobs are readable by their unguessable ID. Jobs created by a signed-in user are only visible to that user.
 
@@ -323,7 +334,7 @@ See `.env.example`. Notable knobs:
 .venv/Scripts/python.exe -m pytest services/backend/tests -q
 ```
 
-183 tests cover format planning/routing, size caps (including the per-job Pro cap), DRM/playlist rejection, playlist ZIP building, subtitle selection, HLS subtitle merging, chapter parsing, the error taxonomy, URL safety (SSRF), rate limiting, auth/sessions, quotas, job ownership, CSRF origin checks, Turnstile gating, cookie parsing/encryption, agent pairing, job flows, shared cloud/desktop metering (idempotent reserves, concurrency, stale reservations, offline replay), billing (Paddle checkout gating, webhook signatures and idempotency, subscription activation/cancellation, lazy expiry, portal links), demo-mode caps, version consistency across packages and installers, cross-platform URL registration, and the desktop agent (host guard, local pairing, plan gating, SSRF, pause/resume, activity persistence, safe reveal paths, title progress formatting, hotkey parsing). Desktop tests are skipped automatically if the `mydl_desktop` package is not installed. `conftest.py` points `DATA_DIR` at a temp directory so tests never touch your dev database.
+205 tests cover format planning/routing, size caps (including the per-job Pro cap), DRM/playlist rejection, playlist ZIP building, subtitle selection, HLS subtitle merging, chapter parsing, the error taxonomy, URL safety (SSRF), rate limiting, auth/sessions, quotas, job ownership, CSRF origin checks, Turnstile gating, cookie parsing/encryption, agent pairing, job flows, shared cloud/desktop metering (idempotent reserves, concurrency, stale reservations, offline replay), billing (Paddle checkout gating, webhook signatures and idempotency, subscription activation/cancellation, lazy expiry, portal links), demo-mode caps, version consistency across packages and installers, cross-platform URL registration, and the desktop agent (host guard, local pairing, plan gating, SSRF, pause/resume, activity persistence, safe reveal paths, title progress formatting, hotkey parsing, URL extraction, link files, watch folder scan dedupe, detection runner lifecycle, pending links, and detection settings). Desktop tests are skipped automatically if the `mydl_desktop` package is not installed. `conftest.py` points `DATA_DIR` at a temp directory so tests never touch your dev database.
 
 CI runs the same suite on every push and pull request (`.github/workflows/ci.yml`). A scheduled workflow (`.github/workflows/ytdlp-update.yml`) checks PyPI every Monday, bumps the `yt-dlp` floor in both packages, runs the suite against that exact release, and opens a pull request when a newer version exists.
 
@@ -367,6 +378,8 @@ Proprietary, all rights reserved. See [LICENSE](LICENSE).
 - [ ] Phase 3c: priority queue and Redis-backed SSE fan-out
 - [x] Phase 4: playlists, subtitles/chapters, error taxonomy, weekly yt-dlp updates in CI
 - [x] Phase 5: cross-platform desktop (Windows, macOS, Linux), signed releases with checksums, public demo mode, Render/Fly deploy blueprints
+- [x] Phase 6a: opt-in clipboard and watch folder link detection with a review-before-download flow
+- [ ] Phase 6b: queue priority and scheduling, update-available flow, cookie profiles, portable settings export
 
 ## Known limitations
 

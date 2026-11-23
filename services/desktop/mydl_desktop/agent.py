@@ -101,7 +101,7 @@ def serve(config: AgentConfig) -> None:
     manager = JobManager(config)
     app = create_app(config, manager)
     metering.start_flusher(config)
-    start_idle_watch(manager, config.idle_timeout_minutes)
+    start_idle_watch(manager, config.idle_timeout_minutes, config)
     logger.info("agent serving on %s (downloads: %s)", AGENT_BASE, config.download_path)
     uvicorn.run(app, host=AGENT_HOST, port=AGENT_PORT, log_level="warning", access_log=False)
 

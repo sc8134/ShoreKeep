@@ -23,6 +23,7 @@ from backend.security import UnsafeURLError, assert_public_http_url
 from . import __version__, metering
 from .config import AGENT_HOST, AGENT_PORT, AgentConfig
 from .cookies import probe_browsers
+from .detect import DetectionStore
 from .jobs import JobBusy, JobManager, JobPaused
 from .platform_utils import reveal_path
 
@@ -44,6 +45,20 @@ class RunRequest(BaseModel):
 
 class RevealRequest(BaseModel):
     id: str = Field(min_length=1, max_length=64)
+
+
+class DetectRequest(BaseModel):
+    url: str = Field(min_length=10, max_length=2048)
+    source: str = Field(default="", max_length=40)
+
+
+class ClearPendingRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+
+
+class SettingsRequest(BaseModel):
+    clipboard_monitor: bool | None = None
+    watch_folder: str | None = Field(default=None, max_length=512)
 
 
 class PairRegistry:
@@ -114,8 +129,13 @@ class PairRegistry:
         }
 
 
-def create_app(config: AgentConfig, manager: JobManager) -> FastAPI:
+def create_app(
+    config: AgentConfig,
+    manager: JobManager,
+    detector: DetectionStore | None = None,
+) -> FastAPI:
     registry = PairRegistry(config)
+    detector = detector or DetectionStore()
 
     app = FastAPI(title="Shorekeep Desktop Agent", version=__version__, docs_url=None, redoc_url=None)
     app.add_middleware(
@@ -170,6 +190,7 @@ def create_app(config: AgentConfig, manager: JobManager) -> FastAPI:
             "paused": manager.paused(),
             "active": manager.active_count(),
             "active_jobs": manager.active_jobs(limit=3),
+            "pending": detector.current(),
             "last_event": (
                 {
                     "id": latest.get("id"),
@@ -223,6 +244,66 @@ def create_app(config: AgentConfig, manager: JobManager) -> FastAPI:
             raise HTTPException(status_code=410, detail="File was moved or deleted")
         reveal_path(target)
         return {"ok": True}
+
+    @app.get("/v1/pending")
+    def pending(_: None = Depends(require_control)) -> dict[str, Any] | None:
+        return detector.current()
+
+    @app.post("/v1/pending/clear")
+    def clear_pending(
+        payload: ClearPendingRequest,
+        _: None = Depends(require_control),
+    ) -> dict[str, bool]:
+        return {"ok": detector.clear(payload.id)}
+
+    @app.post("/v1/detected", status_code=201)
+    def detected(
+        payload: DetectRequest,
+        _: None = Depends(require_control),
+    ) -> dict[str, Any]:
+        url = payload.url.strip()
+        if not url.lower().startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail="Enter a valid http(s) URL")
+        return detector.set(url, payload.source)
+
+    def _settings() -> dict[str, Any]:
+        return {
+            "clipboard_monitor": bool(config.clipboard_monitor),
+            "watch_folder": config.watch_folder,
+            "hotkey": config.hotkey,
+            "download_dir": str(config.download_path),
+            "version": __version__,
+        }
+
+    @app.get("/v1/settings")
+    def get_settings(_: None = Depends(require_control)) -> dict[str, Any]:
+        return _settings()
+
+    @app.post("/v1/settings")
+    def update_settings(
+        payload: SettingsRequest,
+        _: None = Depends(require_control),
+    ) -> dict[str, Any]:
+        if payload.clipboard_monitor is not None:
+            config.clipboard_monitor = bool(payload.clipboard_monitor)
+        if payload.watch_folder is not None:
+            folder = payload.watch_folder.strip()
+            if folder:
+                path = Path(os.path.expanduser(folder))
+                try:
+                    path.mkdir(parents=True, exist_ok=True)
+                except OSError as exc:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Could not use that folder: {exc.strerror or exc}",
+                    ) from exc
+                if not path.is_dir():
+                    raise HTTPException(status_code=400, detail="That path is not a folder")
+                config.watch_folder = str(path)
+            else:
+                config.watch_folder = ""
+        config.save()
+        return _settings()
 
     @app.get("/v1/me")
     def me(identity: dict[str, Any] = Depends(require_pair)) -> dict[str, Any]:
@@ -370,13 +451,19 @@ def create_app(config: AgentConfig, manager: JobManager) -> FastAPI:
     return app
 
 
-def start_idle_watch(manager: JobManager, minutes: int) -> None:
+def start_idle_watch(
+    manager: JobManager,
+    minutes: int,
+    config: AgentConfig | None = None,
+) -> None:
     if minutes <= 0:
         return
 
     def watch() -> None:
         while True:
             time.sleep(60)
+            if config is not None and (config.clipboard_monitor or config.watch_folder):
+                continue
             idle = time.monotonic() - manager.last_activity
             if manager.active_count() == 0 and idle > minutes * 60:
                 logger.info("desktop agent idle for %.0f minutes; exiting", idle / 60)

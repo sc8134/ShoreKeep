@@ -40,6 +40,8 @@ class AgentConfig:
     idle_timeout_minutes: int = 30
     state_dir: str = ""
     hotkey: str = "ctrl+alt+s"
+    clipboard_monitor: bool = False
+    watch_folder: str = ""
 
     @property
     def download_path(self) -> Path:
@@ -89,6 +91,15 @@ class AgentConfig:
             ]
         if os.environ.get("SHOREKEEP_HOTKEY"):
             config.hotkey = os.environ["SHOREKEEP_HOTKEY"]
+        if os.environ.get("SHOREKEEP_CLIPBOARD"):
+            config.clipboard_monitor = os.environ["SHOREKEEP_CLIPBOARD"].strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+        if os.environ.get("SHOREKEEP_WATCH_FOLDER"):
+            config.watch_folder = os.environ["SHOREKEEP_WATCH_FOLDER"]
         if config.cookie_browser not in COOKIE_MODES:
             config.cookie_browser = "auto"
         return config

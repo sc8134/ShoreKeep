@@ -295,7 +295,7 @@
   }
   form { display: grid; gap: clamp(9px, 1.5vh, 14px); position: relative; }
   .row { display: flex; gap: 10px; flex-wrap: wrap; }
-  input[type="url"], input[type="email"], input[type="password"], textarea {
+  input[type="url"], input[type="email"], input[type="password"], input[type="text"], textarea {
     flex: 1 1 200px;
     min-width: 0;
     padding: clamp(9px, 1.5vh, 13px) 15px;
@@ -426,6 +426,13 @@
     width: 100%; min-height: 96px; resize: vertical;
     font-size: 12.5px; font-family: var(--font-mono);
   }
+  .advanced input[type="text"] { flex: 1; min-width: 200px; padding: 8px 11px; font-size: 13px; }
+  .check-row {
+    display: flex; align-items: center; gap: 9px; margin-top: 10px;
+    font-size: 12.5px; color: var(--ink-soft); cursor: pointer;
+  }
+  .check-row input { flex: none; width: 15px; height: 15px; accent-color: var(--oxblood); }
+  .detect-hint { color: var(--oxblood); }
   .hint { font-size: 12.5px; color: var(--muted); line-height: 1.6; margin: 8px 0 0; }
   .file-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
   .file-row label { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
@@ -784,7 +791,7 @@
     .sub { margin-top: 4px; font-size: 13px; }
     .card { padding: 14px 18px; }
     form { gap: 8px; }
-    input[type="url"], input[type="email"], input[type="password"], textarea { padding: 9px 12px; }
+    input[type="url"], input[type="email"], input[type="password"], input[type="text"], textarea { padding: 9px 12px; }
     .primary, button.app { padding: 9px 14px; }
     .chip { padding: 6px 11px; }
     footer {
@@ -886,6 +893,7 @@
         <button class="primary" id="submit" type="submit">Fetch media</button>
         <button class="app" id="app-submit" type="button">Download with Shorekeep</button>
       </div>
+      <p class="hint detect-hint" id="detect-hint" hidden></p>
       <div class="presets" role="group" aria-label="Output format">
         <button type="button" class="chip" data-preset="best" aria-pressed="true">Best quality</button>
         <button type="button" class="chip" data-preset="1080p" aria-pressed="false">1080p</button>
@@ -910,6 +918,22 @@
         <p class="hint">Cookies are encrypted, used only for this job, and deleted when it finishes. Never share your account cookies. DRM and paywall bypass are not supported.</p>
       </details>
     </form>
+
+    <details class="advanced" id="detect-box" hidden>
+      <summary>Link detection</summary>
+      <label class="check-row">
+        <input type="checkbox" id="clipboard-toggle">
+        <span>Watch my clipboard for links</span>
+      </label>
+      <div class="file-row">
+        <label for="watch-folder">Watch a folder:</label>
+        <input type="text" id="watch-folder" placeholder="Leave empty to turn off" spellcheck="false" autocomplete="off">
+        <button class="ghost" id="watch-save" type="button">Save</button>
+      </div>
+      <p class="hint">Detected links are only filled into the box above. Nothing downloads until you click. Detection stays on this device.</p>
+      <p class="hint" id="detect-status" hidden></p>
+      <p class="auth-error" id="detect-error"></p>
+    </details>
 
     <section id="job" aria-live="polite">
       <div class="job-head">
@@ -1084,6 +1108,13 @@
   const browserList = document.getElementById("browser-list");
   const agentRecheck = document.getElementById("agent-recheck");
   const clientBadge = document.getElementById("client-badge");
+  const detectBox = document.getElementById("detect-box");
+  const clipboardToggle = document.getElementById("clipboard-toggle");
+  const watchFolder = document.getElementById("watch-folder");
+  const watchSave = document.getElementById("watch-save");
+  const detectHint = document.getElementById("detect-hint");
+  const detectStatus = document.getElementById("detect-status");
+  const detectError = document.getElementById("detect-error");
   const subsChip = document.getElementById("subs-chip");
   const errorText = document.getElementById("error-text");
   const retryBtn = document.getElementById("retry");
@@ -1147,6 +1178,8 @@
   let agentKey = null;
   let agentWaitTimer = null;
   let dragDepth = 0;
+  let lastPendingId = null;
+  const CONTROL_HEADERS = { "X-Shorekeep-Control": "ui" };
 
   chips.forEach(function (chip) {
     chip.addEventListener("click", function () {
@@ -1231,6 +1264,7 @@
     statSize.textContent = "";
     statSpeed.textContent = "";
     statEta.textContent = "";
+    detectHint.hidden = true;
     document.title = "Shorekeep";
   }
 
@@ -1480,6 +1514,76 @@
     else activityDialog.removeAttribute("open");
   });
 
+  async function loadDetectionSettings() {
+    const result = await agentApi("/v1/settings", { headers: CONTROL_HEADERS }, 3000);
+    if (!result.ok || !result.body) {
+      detectBox.hidden = true;
+      return;
+    }
+    detectBox.hidden = false;
+    clipboardToggle.checked = !!result.body.clipboard_monitor;
+    watchFolder.value = result.body.watch_folder || "";
+  }
+
+  async function saveDetectionSettings(payload) {
+    detectStatus.hidden = true;
+    detectError.classList.remove("visible");
+    detectError.textContent = "";
+    const result = await agentApi("/v1/settings", {
+      method: "POST",
+      headers: Object.assign({ "Content-Type": "application/json" }, CONTROL_HEADERS),
+      body: JSON.stringify(payload)
+    }, 4000);
+    if (!result.ok || !result.body) {
+      const detail = result.body && result.body.detail;
+      detectError.textContent = typeof detail === "string" ? detail : "Could not save the settings.";
+      detectError.classList.add("visible");
+      return;
+    }
+    clipboardToggle.checked = !!result.body.clipboard_monitor;
+    watchFolder.value = result.body.watch_folder || "";
+    detectStatus.textContent = "Saved. Detection starts within a few seconds.";
+    detectStatus.hidden = false;
+    setTimeout(function () { detectStatus.hidden = true; }, 4000);
+  }
+
+  async function consumePending() {
+    if (!agent || document.hidden || !document.hasFocus()) return;
+    const result = await agentApi("/v1/pending", { headers: CONTROL_HEADERS }, 3000);
+    if (!result.ok || !result.body || !result.body.id) return;
+    const pending = result.body;
+    if (pending.id === lastPendingId) return;
+    if (urlInput === document.activeElement && urlInput.value.trim() && urlInput.value.trim() !== pending.url) {
+      return;
+    }
+    lastPendingId = pending.id;
+    urlInput.value = pending.url;
+    detectHint.textContent = pending.source === "clipboard"
+      ? "Link detected from your clipboard. Review it, then click Download."
+      : "Link detected in your watch folder. Review it, then click Download.";
+    detectHint.hidden = false;
+    urlInput.focus();
+    await agentApi("/v1/pending/clear", {
+      method: "POST",
+      headers: Object.assign({ "Content-Type": "application/json" }, CONTROL_HEADERS),
+      body: JSON.stringify({ id: pending.id })
+    }, 3000);
+  }
+
+  clipboardToggle.addEventListener("change", function () {
+    saveDetectionSettings({ clipboard_monitor: clipboardToggle.checked });
+  });
+  watchSave.addEventListener("click", function () {
+    saveDetectionSettings({ watch_folder: watchFolder.value.trim() });
+  });
+  watchFolder.addEventListener("keydown", function (event) {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    saveDetectionSettings({ watch_folder: watchFolder.value.trim() });
+  });
+  urlInput.addEventListener("input", function () { detectHint.hidden = true; });
+  window.addEventListener("focus", function () { consumePending(); });
+
   function updateAgentPill(online) {
     agentPill.hidden = false;
     agentPill.className = "app-pill " + (online ? "online" : "offline");
@@ -1513,9 +1617,12 @@
       if (!showPanel) hideAppPanel();
       loadHistory();
       refreshActivity();
+      loadDetectionSettings();
+      consumePending();
       return agent;
     }
     agent = null;
+    detectBox.hidden = true;
     updateAgentPill(false);
     agentState.textContent = "The Shorekeep app is not running yet. One-time setup:";
     if (showPanel) showAppPanel();
@@ -2256,8 +2363,13 @@
     setInterval(function () {
       if (!document.hidden) refreshActivity();
     }, 15000);
+    setInterval(function () {
+      if (!document.hidden) consumePending();
+    }, 4000);
     document.addEventListener("visibilitychange", function () {
-      if (!document.hidden) refreshActivity();
+      if (document.hidden) return;
+      refreshActivity();
+      consumePending();
     });
   }
 
