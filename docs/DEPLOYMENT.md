@@ -152,7 +152,7 @@ Without a certificate the build still succeeds and prints that artifacts are uns
 
 ### GitHub release workflow
 
-`.github/workflows/release.yml` runs on tags like `v0.4.0`:
+`.github/workflows/release.yml` runs on tags like `v0.4.1`:
 
 1. runs the test suite;
 2. builds Windows on `windows-latest`, with Inno Setup installed;
@@ -207,7 +207,7 @@ Produces `dist/Shorekeep-linux-<arch>-<version>.tar.gz` and a `.sha256` file. No
 ```bash
 sha256sum -c SHA256SUMS.txt          # Linux
 shasum -a 256 -c Shorekeep-*.sha256  # macOS
-Get-FileHash .\Shorekeep-Setup-0.4.0.exe -Algorithm SHA256   # Windows
+Get-FileHash .\Shorekeep-Setup-0.4.1.exe -Algorithm SHA256   # Windows
 ```
 
 Windows users can also right-click the installer, choose Properties, and check the Digital Signatures tab.
