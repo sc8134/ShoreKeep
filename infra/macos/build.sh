@@ -74,7 +74,7 @@ if [ -n "${NOTARY_PROFILE:-}" ]; then
   ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 fi
 
-shasum -a 256 "$ZIP" > "$ZIP.sha256"
+(cd dist && shasum -a 256 "Shorekeep-macos-$VERSION.zip") > "$ZIP.sha256"
 
 echo "App:  $APP"
 echo "Zip:  $ZIP"

@@ -40,7 +40,7 @@ TARBALL="dist/Shorekeep-linux-$ARCH-$VERSION.tar.gz"
 rm -f "$TARBALL"
 tar -czf "$TARBALL" -C dist Shorekeep
 
-sha256sum "$TARBALL" > "$TARBALL.sha256"
+(cd dist && sha256sum "Shorekeep-linux-$ARCH-$VERSION.tar.gz") > "$TARBALL.sha256"
 
 echo "Bundle: dist/Shorekeep"
 echo "Tarball: $TARBALL"

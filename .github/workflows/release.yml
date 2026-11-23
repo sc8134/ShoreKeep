@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to publish, for example v0.4.1"
+        description: "Release tag to publish, for example v0.4.2"
         required: false
         default: ""
 
@@ -136,6 +136,7 @@ jobs:
           done
           find . -name "*.sha256" -exec cat {} \; >> SHA256SUMS.txt
           sort -u SHA256SUMS.txt | sed '/^$/d' > SHA256SUMS.sorted && mv SHA256SUMS.sorted SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -145,7 +146,6 @@ jobs:
           fail_on_unmatched_files: false
           files: |
             artifacts/windows/*.exe
-            artifacts/windows/SHA256SUMS.txt
             artifacts/linux/*.tar.gz
             artifacts/linux/*.sha256
             artifacts/macos/*.zip

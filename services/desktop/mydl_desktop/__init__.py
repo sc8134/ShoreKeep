@@ -4,4 +4,4 @@ Downloads are performed locally (cookies never leave the machine) and the web ap
 only orchestrates through a localhost API.
 """
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"

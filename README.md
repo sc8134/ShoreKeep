@@ -13,7 +13,7 @@ Shorekeep is a video/audio download platform with a hybrid engine. The product i
 - **ffmpeg** muxes/remuxes (`-c copy` where possible) and extracts MP3 audio
 - **FastAPI** API and single-page UI, with SSE progress and a DB-polling worker; **SQLite** locally, **Postgres** in production via Alembic
 
-Status: **0.4.1, production track**. Single jobs and playlists, presets, progress streaming, auto-expiry, email/password accounts, free-tier limits, optional Turnstile, encrypted per-job cookies, VTT subtitles and chapter metadata, structured error codes, an optional desktop app for Windows, macOS, and Linux with automatic browser cookies and server-enforced metering, Paddle billing for Pro ($5/month or $45/year, 4 GB files), Postgres with advisory-lock quotas and `SKIP LOCKED` claiming, a public demo mode, Render/Fly/Docker deploy configs, and signed, checksummed desktop releases. Next: priority queue, billing polish, and a browser extension for Chromium cookies.
+Status: **0.4.2, production track**. Single jobs and playlists, presets, progress streaming, auto-expiry, email/password accounts, free-tier limits, optional Turnstile, encrypted per-job cookies, VTT subtitles and chapter metadata, structured error codes, an optional desktop app for Windows, macOS, and Linux with automatic browser cookies and server-enforced metering, Paddle billing for Pro ($5/month or $45/year, 4 GB files), Postgres with advisory-lock quotas and `SKIP LOCKED` claiming, a public demo mode, Render/Fly/Docker deploy configs, and signed, checksummed desktop releases. Next: priority queue, billing polish, and a browser extension for Chromium cookies.
 
 ## Architecture
 
