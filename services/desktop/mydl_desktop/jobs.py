@@ -53,6 +53,10 @@ class JobBusy(JobError):
     pass
 
 
+class JobPaused(JobError):
+    pass
+
+
 @dataclass
 class LocalJob:
     id: str
@@ -140,9 +144,20 @@ class JobManager:
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="mydl-job")
         self.max_workers = max_workers
         self.last_activity = time.monotonic()
+        self._paused = threading.Event()
 
     def touch(self) -> None:
         self.last_activity = time.monotonic()
+
+    def paused(self) -> bool:
+        return self._paused.is_set()
+
+    def set_paused(self, paused: bool) -> None:
+        if paused:
+            self._paused.set()
+        else:
+            self._paused.clear()
+        self.touch()
 
     def active_count(self) -> int:
         with self._lock:
@@ -150,6 +165,11 @@ class JobManager:
 
     def ensure_capacity(self) -> None:
         with self._lock:
+            if self._paused.is_set():
+                raise JobPaused(
+                    "Downloads are paused in the Shorekeep tray menu. "
+                    "Choose Resume downloads to continue."
+                )
             if self.active_count() >= self.max_workers:
                 raise JobBusy(
                     f"The desktop app is already processing {self.max_workers} downloads. "

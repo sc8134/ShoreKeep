@@ -23,7 +23,7 @@ from backend.security import UnsafeURLError, assert_public_http_url
 from . import __version__, metering
 from .config import AGENT_HOST, AGENT_PORT, AgentConfig
 from .cookies import probe_browsers
-from .jobs import JobBusy, JobManager
+from .jobs import JobBusy, JobManager, JobPaused
 
 logger = logging.getLogger(__name__)
 
@@ -160,9 +160,25 @@ def create_app(config: AgentConfig, manager: JobManager) -> FastAPI:
             "app": "shorekeep-desktop",
             "version": __version__,
             "paired": bool(config.device_token),
+            "paused": manager.paused(),
+            "active": manager.active_count(),
             "download_dir": str(config.download_path),
             "browsers": probe_browsers(),
         }
+
+    def require_tray(control: str = Header(default="", alias="X-Shorekeep-Control")) -> None:
+        if control != "tray":
+            raise HTTPException(status_code=403, detail="Local tray control only")
+
+    @app.post("/v1/pause")
+    def pause(_: None = Depends(require_tray)) -> dict[str, Any]:
+        manager.set_paused(True)
+        return {"paused": True, "active": manager.active_count()}
+
+    @app.post("/v1/resume")
+    def resume(_: None = Depends(require_tray)) -> dict[str, Any]:
+        manager.set_paused(False)
+        return {"paused": False, "active": manager.active_count()}
 
     @app.get("/v1/me")
     def me(identity: dict[str, Any] = Depends(require_pair)) -> dict[str, Any]:
@@ -206,6 +222,8 @@ def create_app(config: AgentConfig, manager: JobManager) -> FastAPI:
 
         try:
             manager.ensure_capacity()
+        except JobPaused as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except JobBusy as exc:
             raise HTTPException(status_code=429, detail=str(exc), headers={"Retry-After": "15"}) from exc
 
@@ -234,6 +252,18 @@ def create_app(config: AgentConfig, manager: JobManager) -> FastAPI:
                 cookie_browser=cookie_mode,
                 subtitles=payload.subtitles,
             )
+        except JobPaused as exc:
+            metering.complete(
+                config,
+                job_id=job_id,
+                status="failed",
+                preset=preset,
+                url=url,
+                size_bytes=0,
+                error="Not started: downloads paused",
+                started_at=datetime.now(timezone.utc),
+            )
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except JobBusy as exc:
             metering.complete(
                 config,

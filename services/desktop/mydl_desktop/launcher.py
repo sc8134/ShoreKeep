@@ -82,8 +82,11 @@ def main(argv: list[str] | None = None) -> int:
             from .tray import acquire_single_instance, run_tray
 
             if not acquire_single_instance():
-                if not minimized and _open_window(config) is None:
-                    _open_ui(config)
+                if not minimized:
+                    from . import window
+
+                    if not window.focus_running(config) and _open_window(config) is None:
+                        _open_ui(config)
                 return 0
             web_child = webapp.ensure_webapp(config)
             if webapp.is_local(config) and web_child is None and not webapp.web_ready(config):

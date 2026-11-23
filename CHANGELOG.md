@@ -2,6 +2,19 @@
 
 Notable changes to Shorekeep. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions use [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Launching Shorekeep again raises the existing window instead of starting a second copy. The window answers focus requests over a loopback control channel.
+- The tray menu can pause and resume new downloads. Downloads already running finish, and paused launches are rejected cleanly.
+- The tray supervises the desktop agent, the local web app, and the window. It restarts them after a crash with a restart budget and shows a notification when a service keeps stopping.
+- The tray menu now shows live status: starting, ready, paused, and the number of active downloads.
+
+### Fixed
+
+- Child process log handles are closed in the parent after each spawn, so long tray sessions no longer leak file handles.
+
 ## [0.4.2] - 2026-11-23
 
 ### Fixed

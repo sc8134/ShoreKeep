@@ -173,7 +173,7 @@ bash infra/linux/build.sh
 
 Windows produces:
 
-- `dist\Shorekeep\Shorekeep.exe`: the portable app. Launched normally it starts the bundled web app (API, UI, and worker) on `http://127.0.0.1:8000`, opens a native window against it, and keeps a tray icon; it also starts or reuses the local download agent and handles `shorekeep://` links. The same UI stays available in any browser at `http://127.0.0.1:8000`;
+- `dist\Shorekeep\Shorekeep.exe`: the portable app. Launched normally it starts the bundled web app (API, UI, and worker) on `http://127.0.0.1:8000`, opens a native window against it, and keeps a tray icon; it also starts or reuses the local download agent and handles `shorekeep://` links. Launching it again raises the existing window. The tray menu shows live status, can pause and resume new downloads, and restarts the agent, web app, or window if one stops. The same UI stays available in any browser at `http://127.0.0.1:8000`;
 - `dist\installer\Shorekeep-Setup-<version>.exe`: the self-extracting setup;
 - `dist\installer\SHA256SUMS.txt`: checksums for the installers.
 

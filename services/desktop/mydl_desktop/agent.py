@@ -61,16 +61,19 @@ def start_agent(config: AgentConfig, timeout: float = 12.0) -> subprocess.Popen 
     if os.name == "nt":
         creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
     logger.info("starting desktop agent on %s", AGENT_BASE)
-    child = subprocess.Popen(
-        _serve_command(),
-        stdin=subprocess.DEVNULL,
-        stdout=log,
-        stderr=log,
-        cwd=str(Path.home()),
-        env=dict(os.environ),
-        creationflags=creationflags,
-        close_fds=True,
-    )
+    try:
+        child = subprocess.Popen(
+            _serve_command(),
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            cwd=str(Path.home()),
+            env=dict(os.environ),
+            creationflags=creationflags,
+            close_fds=True,
+        )
+    finally:
+        log.close()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if health(timeout=0.6):

@@ -77,16 +77,19 @@ def start_webapp(config: AgentConfig, timeout: float = 30.0) -> subprocess.Popen
     if os.name == "nt":
         creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
     logger.info("starting the Shorekeep web app on %s", config.server_base)
-    child = subprocess.Popen(
-        _serve_command(),
-        stdin=subprocess.DEVNULL,
-        stdout=log,
-        stderr=log,
-        cwd=str(config_dir()),
-        env=dict(os.environ),
-        creationflags=creationflags,
-        close_fds=True,
-    )
+    try:
+        child = subprocess.Popen(
+            _serve_command(),
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            cwd=str(config_dir()),
+            env=dict(os.environ),
+            creationflags=creationflags,
+            close_fds=True,
+        )
+    finally:
+        log.close()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if web_ready(config, timeout=0.6):

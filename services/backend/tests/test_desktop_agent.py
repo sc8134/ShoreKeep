@@ -34,7 +34,33 @@ def test_health_reports_browsers(agent_client):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["ok"] is True
+    assert body["paused"] is False
+    assert body["active"] == 0
     assert any(item["key"] == "firefox" for item in body["browsers"])
+
+
+def test_pause_requires_tray_control_header(agent_client):
+    assert agent_client.post("/v1/pause").status_code == 403
+    assert agent_client.post("/v1/resume").status_code == 403
+
+
+def test_pause_blocks_new_downloads_until_resume(agent_client):
+    paused = agent_client.post("/v1/pause", headers={"X-Shorekeep-Control": "tray"})
+    assert paused.status_code == 200
+    assert paused.json()["paused"] is True
+    assert agent_client.get("/health").json()["paused"] is True
+
+    run = agent_client.post(
+        "/v1/run",
+        json={"url": "https://example.com/video", "preset": "best"},
+        headers={"X-Agent-Key": "k" * 40},
+    )
+    assert run.status_code == 503
+    assert "paused" in run.json()["detail"].lower()
+
+    resumed = agent_client.post("/v1/resume", headers={"X-Shorekeep-Control": "tray"})
+    assert resumed.status_code == 200
+    assert agent_client.get("/health").json()["paused"] is False
 
 
 def test_host_guard_blocks_rebinding(agent_client):
