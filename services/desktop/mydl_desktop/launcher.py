@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 import sys
 import time
 import webbrowser
@@ -11,17 +12,25 @@ logger = logging.getLogger("mydl_desktop")
 
 
 def _show_error(log_path) -> None:
-    if sys.platform != "win32" or not getattr(sys, "frozen", False):
-        return
+    text = f"Shorekeep could not start. See {log_path} for details."
     try:
-        import ctypes
+        if sys.platform == "win32" and getattr(sys, "frozen", False):
+            import ctypes
 
-        ctypes.windll.user32.MessageBoxW(
-            None,
-            f"Shorekeep could not start. See {log_path} for details.",
-            "Shorekeep",
-            0x10,
-        )
+            ctypes.windll.user32.MessageBoxW(None, text, "Shorekeep", 0x10)
+        elif sys.platform == "darwin":
+            safe = text.replace('"', '\\"')
+            script = (
+                f'display dialog "{safe}" with title "Shorekeep" '
+                'buttons {"OK"} default button "OK"'
+            )
+            subprocess.run(["osascript", "-e", script], check=False, capture_output=True)
+        else:
+            subprocess.run(
+                ["zenity", "--error", "--title", "Shorekeep", "--text", text],
+                check=False,
+                capture_output=True,
+            )
     except Exception:
         pass
 

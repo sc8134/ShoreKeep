@@ -1,31 +1,23 @@
 from __future__ import annotations
 
-import ctypes
 import logging
-import os
 import subprocess
-import sys
 import webbrowser
 
 from .config import AgentConfig
+from .platform_utils import SingleInstance, open_path
 
 logger = logging.getLogger(__name__)
 
-_MUTEX_NAME = "Shorekeep-Tray"
-_handles: list[int] = []
+_instance: SingleInstance | None = None
 
 
 def acquire_single_instance() -> bool:
-    """Return False when another tray instance is already running (Windows only)."""
-    if sys.platform != "win32":
-        return True
-    handle = ctypes.windll.kernel32.CreateMutexW(None, False, _MUTEX_NAME)
-    if not handle:
-        return True
-    if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
-        return False
-    _handles.append(handle)
-    return True
+    """Return False when another tray instance is already running."""
+    global _instance
+    if _instance is None:
+        _instance = SingleInstance("tray")
+    return _instance.acquire()
 
 
 def icon_image(size: int = 256):
@@ -37,13 +29,6 @@ def icon_image(size: int = 256):
     with resource.open("rb") as handle:
         image = Image.open(handle).convert("RGBA")
     return image.resize((size, size), Image.LANCZOS)
-
-
-def _open_path(path) -> None:
-    if hasattr(os, "startfile"):
-        os.startfile(str(path))
-    else:
-        webbrowser.open(path.as_uri() if hasattr(path, "as_uri") else str(path))
 
 
 def _stop(child: subprocess.Popen | None) -> None:
@@ -86,7 +71,7 @@ def run_tray(
         path = config.download_path
         path.mkdir(parents=True, exist_ok=True)
         try:
-            _open_path(path)
+            open_path(path)
         except Exception:
             logger.exception("could not open %s", path)
 

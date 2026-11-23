@@ -12,7 +12,21 @@ from pathlib import Path
 
 APP_NAME = "Shorekeep"
 APP_EXE = "Shorekeep.exe"
-VERSION = "0.3.0"
+
+
+def _read_version() -> str:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    for candidate in (base / "VERSION", Path(__file__).resolve().parents[2] / "VERSION"):
+        try:
+            value = candidate.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if value:
+            return value
+    return "0.0.0"
+
+
+VERSION = _read_version()
 CREATE_NO_WINDOW = 0x08000000
 MB_OK = 0x0
 MB_YESNO = 0x4

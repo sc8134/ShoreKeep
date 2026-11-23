@@ -32,29 +32,54 @@ class Usage:
     presets: tuple[str, ...]
 
 
+def _demo_cap(plan: PlanInfo) -> PlanInfo:
+    """Cap every plan for the public demo so it cannot be used as a free downloader."""
+    if not settings.demo_mode:
+        return plan
+    max_preset = plan.max_preset
+    if settings.demo_max_preset and (
+        max_preset is None
+        or _PRESET_ORDER.get(settings.demo_max_preset, 4) < _PRESET_ORDER.get(max_preset, 4)
+    ):
+        max_preset = settings.demo_max_preset
+    return PlanInfo(
+        name=plan.name,
+        jobs_per_hour=min(plan.jobs_per_hour, settings.demo_jobs_per_hour),
+        max_active_jobs=min(plan.max_active_jobs, settings.demo_max_active_jobs),
+        max_preset=max_preset,
+        max_filesize_mb=min(plan.max_filesize_mb, settings.demo_max_filesize_mb),
+    )
+
+
 def plan_for(user: User | None) -> PlanInfo:
     if user is None:
-        return PlanInfo(
-            name="anonymous",
-            jobs_per_hour=settings.anon_jobs_per_ip_hour,
-            max_active_jobs=settings.anon_max_active_jobs,
-            max_preset=settings.anon_max_preset or None,
-            max_filesize_mb=settings.max_filesize_mb,
+        return _demo_cap(
+            PlanInfo(
+                name="anonymous",
+                jobs_per_hour=settings.anon_jobs_per_ip_hour,
+                max_active_jobs=settings.anon_max_active_jobs,
+                max_preset=settings.anon_max_preset or None,
+                max_filesize_mb=settings.max_filesize_mb,
+            )
         )
     if user.plan == "pro":
-        return PlanInfo(
-            name="pro",
-            jobs_per_hour=settings.pro_jobs_per_user_hour,
-            max_active_jobs=settings.pro_max_active_jobs,
-            max_preset=None,
-            max_filesize_mb=max(settings.max_filesize_mb, settings.pro_max_filesize_mb),
+        return _demo_cap(
+            PlanInfo(
+                name="pro",
+                jobs_per_hour=settings.pro_jobs_per_user_hour,
+                max_active_jobs=settings.pro_max_active_jobs,
+                max_preset=None,
+                max_filesize_mb=max(settings.max_filesize_mb, settings.pro_max_filesize_mb),
+            )
         )
-    return PlanInfo(
-        name="free",
-        jobs_per_hour=settings.free_jobs_per_user_hour,
-        max_active_jobs=settings.free_max_active_jobs,
-        max_preset=None,
-        max_filesize_mb=settings.max_filesize_mb,
+    return _demo_cap(
+        PlanInfo(
+            name="free",
+            jobs_per_hour=settings.free_jobs_per_user_hour,
+            max_active_jobs=settings.free_max_active_jobs,
+            max_preset=None,
+            max_filesize_mb=settings.max_filesize_mb,
+        )
     )
 
 

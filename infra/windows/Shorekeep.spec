@@ -25,7 +25,7 @@ datas += collect_data_files("backend")
 hiddenimports += ffmpeg_hidden
 
 a = Analysis(
-    [str(Path(SPECPATH) / "entry.py")],
+    [str(ROOT / "infra" / "entry.py")],
     pathex=[str(DESKTOP), str(BACKEND)],
     binaries=binaries,
     datas=datas,

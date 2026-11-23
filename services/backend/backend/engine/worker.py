@@ -12,7 +12,7 @@ from sqlmodel import Session, delete, select
 from ..agent_auth import purge_expired_pairs
 from ..auth import purge_expired_sessions
 from ..config import settings
-from ..db import engine, init_db
+from ..db import IS_POSTGRES, engine, init_db
 from ..models import RUNNING_STATUSES, DesktopJob, Job, utcnow
 from .pipeline import run_job
 from .storage import storage
@@ -25,9 +25,11 @@ WORKER_ID = f"worker-{uuid4().hex[:8]}"
 
 def claim_job() -> str | None:
     with Session(engine) as session:
-        candidate = session.exec(
-            select(Job).where(Job.status == "queued").order_by(Job.created_at).limit(1)
-        ).first()
+        statement = select(Job).where(Job.status == "queued").order_by(Job.created_at).limit(1)
+        if IS_POSTGRES:
+            # Let several workers claim different rows instead of all racing for the first.
+            statement = statement.with_for_update(skip_locked=True)
+        candidate = session.exec(statement).first()
         if candidate is None:
             return None
         result = session.execute(

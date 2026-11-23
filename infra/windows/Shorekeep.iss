@@ -1,5 +1,7 @@
 #define AppName "Shorekeep"
-#define AppVersion "0.3.0"
+#ifndef AppVersion
+  #define AppVersion "0.4.0"
+#endif
 #define AppPublisher "Shorekeep"
 #define AppExeName "Shorekeep.exe"
 

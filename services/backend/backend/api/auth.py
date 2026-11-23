@@ -197,14 +197,29 @@ def me(
 
 
 def config_payload() -> dict[str, Any]:
+    demo_max_filesize = (
+        min(settings.max_filesize_mb, settings.demo_max_filesize_mb)
+        if settings.demo_mode
+        else settings.max_filesize_mb
+    )
     return {
         "turnstile": {
             "enabled": bool(settings.turnstile_enabled and settings.turnstile_secret),
             "site_key": settings.turnstile_site_key,
         },
+        "demo": {
+            "enabled": settings.demo_mode,
+            "max_preset": settings.demo_max_preset or None,
+            "max_filesize_mb": demo_max_filesize,
+            "jobs_per_hour": settings.demo_jobs_per_hour,
+        },
         "limits": {
-            "anon_max_preset": settings.anon_max_preset or None,
-            "max_filesize_mb": settings.max_filesize_mb,
+            "anon_max_preset": (
+                settings.demo_max_preset
+                if settings.demo_mode and settings.demo_max_preset
+                else settings.anon_max_preset or None
+            ),
+            "max_filesize_mb": demo_max_filesize,
             "retention_seconds": settings.retention_seconds,
         },
         "billing": {

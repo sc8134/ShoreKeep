@@ -1,0 +1,147 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "services/backend[dev]" -e "services/desktop"
+      - name: Run tests
+        run: python -m pytest services/backend/tests -q
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    env:
+      WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Decode signing certificate
+        if: env.WINDOWS_CERT_PFX_BASE64 != ''
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP "shorekeep.pfx"
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+          "SHOREKEEP_SIGN_CERT_PATH=$path" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "SHOREKEEP_SIGN_CERT_PASSWORD=$env:WINDOWS_CERT_PASSWORD" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build
+        shell: pwsh
+        env:
+          INNO_SETUP_ISCC: "C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe"
+        run: |
+          python -m venv .venv
+          .\infra\windows\build.ps1
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          if-no-files-found: error
+          path: |
+            dist/installer/*.exe
+            dist/installer/SHA256SUMS.txt
+
+  linux:
+    needs: test
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Build
+        run: |
+          python -m venv .venv
+          bash infra/linux/build.sh
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          if-no-files-found: warn
+          path: dist/Shorekeep-linux-*.tar.gz*
+
+  macos:
+    needs: test
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Build
+        env:
+          SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          NOTARY_PROFILE: ""
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -q pyobjc-framework-Cocoa pyobjc-framework-WebKit pyobjc-framework-Quartz
+          bash infra/macos/build.sh
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          if-no-files-found: warn
+          path: dist/Shorekeep-macos-*.zip*
+
+  release:
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Combine checksums
+        run: |
+          cd artifacts
+          : > SHA256SUMS.txt
+          for dir in */; do
+            if [ -f "$dir/SHA256SUMS.txt" ]; then
+              cat "$dir/SHA256SUMS.txt" >> SHA256SUMS.txt
+            fi
+          done
+          find . -name "*.sha256" -exec cat {} \; >> SHA256SUMS.txt
+          sort -u SHA256SUMS.txt | sed '/^$/d' > SHA256SUMS.sorted && mv SHA256SUMS.sorted SHA256SUMS.txt
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+          files: |
+            artifacts/windows/*.exe
+            artifacts/windows/SHA256SUMS.txt
+            artifacts/linux/*.tar.gz
+            artifacts/linux/*.sha256
+            artifacts/macos/*.zip
+            artifacts/macos/*.sha256
+            artifacts/SHA256SUMS.txt

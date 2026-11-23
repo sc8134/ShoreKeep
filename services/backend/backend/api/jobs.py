@@ -16,7 +16,7 @@ from sqlmodel import Session, select
 from ..auth import hash_ip
 from ..config import settings
 from ..cookies import CookieError, encrypt_cookies, validate_cookies
-from ..db import engine, get_session
+from ..db import engine, get_session, quota_guard
 from ..engine.errors import retryable_code
 from ..engine.storage import storage
 from ..models import ACTIVE_STATUSES, TERMINAL_STATUSES, Job, User
@@ -199,63 +199,71 @@ def create_job(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     client_hash = hash_ip(ip)
-    used = plan_usage(session, user, client_hash)
-    if used.used_this_hour >= used.limit_per_hour:
-        if user is None:
-            hint = "Sign in for a higher limit."
-        elif plan.name == "free":
-            hint = "Upgrade to Pro for 100 per hour."
-        else:
-            hint = "Try again later."
-        raise HTTPException(
-            status_code=429,
-            detail=f"Hourly limit reached ({plan.jobs_per_hour}/hour). {hint}",
-            headers={"Retry-After": "600"},
-        )
-    if used.active_jobs >= used.max_active_jobs:
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                f"You already have {used.active_jobs} job(s) in progress "
-                f"(max {used.max_active_jobs}). Wait for one to finish."
-            ),
-            headers={"Retry-After": "30"},
-        )
-
-    active = session.scalar(
-        sa_select(func.count()).select_from(Job).where(Job.status.in_(ACTIVE_STATUSES))
-    )
-    if active is not None and active >= settings.max_queue_depth:
-        raise HTTPException(
-            status_code=429,
-            detail="The conversion queue is full right now. Try again shortly.",
-            headers={"Retry-After": "30"},
-        )
-
-    cookies_enc: str | None = None
-    if payload.cookies and payload.cookies.strip():
-        if user is None:
+    quota_key = f"user:{user.id}" if user else f"ip:{client_hash}"
+    with quota_guard(session, quota_key):
+        used = plan_usage(session, user, client_hash)
+        if used.used_this_hour >= used.limit_per_hour:
+            if user is None:
+                hint = "Sign in for a higher limit."
+            elif plan.name == "free":
+                hint = "Upgrade to Pro for 100 per hour."
+            else:
+                hint = "Try again later."
             raise HTTPException(
-                status_code=403,
-                detail="Sign in to use your own cookies",
+                status_code=429,
+                detail=f"Hourly limit reached ({plan.jobs_per_hour}/hour). {hint}",
+                headers={"Retry-After": "600"},
             )
-        try:
-            cookies_enc = encrypt_cookies(validate_cookies(payload.cookies))
-        except CookieError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if used.active_jobs >= used.max_active_jobs:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"You already have {used.active_jobs} job(s) in progress "
+                    f"(max {used.max_active_jobs}). Wait for one to finish."
+                ),
+                headers={"Retry-After": "30"},
+            )
 
-    job = Job(
-        id=uuid.uuid4().hex,
-        url=url,
-        preset=payload.preset,
-        want_subtitles=payload.subtitles,
-        user_id=user.id if user else None,
-        client_hash=client_hash,
-        cookies_enc=cookies_enc,
-        max_filesize_mb=plan.max_filesize_mb,
-    )
-    session.add(job)
-    session.commit()
+        active = session.scalar(
+            sa_select(func.count()).select_from(Job).where(Job.status.in_(ACTIVE_STATUSES))
+        )
+        if active is not None and active >= settings.max_queue_depth:
+            raise HTTPException(
+                status_code=429,
+                detail="The conversion queue is full right now. Try again shortly.",
+                headers={"Retry-After": "30"},
+            )
+
+        cookies_enc: str | None = None
+        if payload.cookies and payload.cookies.strip():
+            if settings.demo_mode:
+                raise HTTPException(
+                    status_code=403,
+                    detail="The public demo does not accept cookies.",
+                )
+            if user is None:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Sign in to use your own cookies",
+                )
+            try:
+                cookies_enc = encrypt_cookies(validate_cookies(payload.cookies))
+            except CookieError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        job = Job(
+            id=uuid.uuid4().hex,
+            url=url,
+            preset=payload.preset,
+            want_subtitles=payload.subtitles,
+            user_id=user.id if user else None,
+            client_hash=client_hash,
+            cookies_enc=cookies_enc,
+            max_filesize_mb=plan.max_filesize_mb,
+        )
+        session.add(job)
+        session.commit()
+
     session.refresh(job)
     return _to_read(job)
 

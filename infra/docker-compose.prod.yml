@@ -1,0 +1,82 @@
+name: shorekeep
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-shorekeep}
+      POSTGRES_USER: ${POSTGRES_USER:-shorekeep}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in the environment}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shorekeep} -d ${POSTGRES_DB:-shorekeep}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.backend
+    command: alembic -c /app/alembic.ini upgrade head
+    restart: "no"
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-shorekeep}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-shorekeep}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.backend
+    command: uvicorn backend.api.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips=*
+    restart: unless-stopped
+    init: true
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-shorekeep}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-shorekeep}
+      DATA_DIR: /data
+    volumes:
+      - media_data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.backend
+    command: python -m backend.engine.worker
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-shorekeep}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-shorekeep}
+      DATA_DIR: /data
+    volumes:
+      - media_data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pg_data:
+  media_data:

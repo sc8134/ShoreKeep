@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ctypes
 import importlib.util
 import logging
 import os
@@ -11,12 +10,12 @@ from pathlib import Path
 
 from . import webapp
 from .config import AgentConfig, config_dir
+from .platform_utils import SingleInstance
 
 logger = logging.getLogger(__name__)
 
 WINDOW_TITLE = "Shorekeep"
-_MUTEX_NAME = "Shorekeep-Window"
-_handles: list[int] = []
+_instance: SingleInstance | None = None
 
 
 def available() -> bool:
@@ -59,15 +58,21 @@ def spawn(config: AgentConfig) -> subprocess.Popen | None:
 
 
 def _acquire_single_instance() -> bool:
-    if sys.platform != "win32":
-        return True
-    handle = ctypes.windll.kernel32.CreateMutexW(None, False, _MUTEX_NAME)
-    if not handle:
-        return True
-    if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
-        return False
-    _handles.append(handle)
-    return True
+    global _instance
+    if _instance is None:
+        _instance = SingleInstance("window")
+    return _instance.acquire()
+
+
+def _gui() -> str:
+    override = os.environ.get("SHOREKEEP_WEBVIEW_GUI")
+    if override:
+        return override
+    if sys.platform == "win32":
+        return "edgechromium"
+    if sys.platform == "darwin":
+        return "cocoa"
+    return "gtk"
 
 
 def main(config: AgentConfig) -> int:
@@ -98,7 +103,7 @@ def main(config: AgentConfig) -> int:
             height=860,
             min_size=(900, 600),
         )
-        webview.start(gui="edgechromium")
+        webview.start(gui=_gui())
     except Exception:
         logger.exception("the native window failed to start")
         return 1

@@ -156,8 +156,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="shorekeep-desktop", description="Shorekeep desktop companion")
     parser.add_argument("uri", nargs="?", help="shorekeep:// deep link")
     parser.add_argument("--serve", action="store_true", help="run the local agent server")
-    parser.add_argument("--register", action="store_true", help="register the shorekeep:// protocol (Windows)")
-    parser.add_argument("--unregister", action="store_true", help="remove the shorekeep:// protocol (Windows)")
+    parser.add_argument("--register", action="store_true", help="register the shorekeep:// protocol for this user")
+    parser.add_argument("--unregister", action="store_true", help="remove the shorekeep:// protocol")
     parser.add_argument("--status", action="store_true", help="print agent status")
     parser.add_argument("--pair", metavar="TOKEN", help="claim a pairing token from the web app")
     args = parser.parse_args(argv)
@@ -167,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
         from .register import install
 
         install()
-        print("Registered shorekeep:// links for the current Windows user.")
+        print("Registered shorekeep:// links for the current user.")
         return 0
     if args.unregister:
         from .register import uninstall

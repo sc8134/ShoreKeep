@@ -11,7 +11,7 @@ from sqlmodel import Session
 
 from ..agent_auth import claim_pair, create_pair, resolve_device
 from ..config import settings
-from ..db import get_session
+from ..db import get_session, quota_guard
 from ..models import AgentDevice, DesktopJob, User, utcnow
 from ..plans import allowed_presets, plan_for, preset_allowed, usage as plan_usage
 from ..ratelimit import SlidingWindowLimiter
@@ -239,37 +239,38 @@ def start_desktop_job(
         response.status_code = 200
         return _desktop_read(session, user, existing)
 
-    used = plan_usage(session, user, None)
-    if used.used_this_hour >= used.limit_per_hour:
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                f"Hourly limit reached ({used.used_this_hour}/{used.limit_per_hour} this hour, "
-                "including downloads on this computer). Try again later."
-            ),
-            headers={"Retry-After": "600"},
-        )
-    if used.active_jobs >= used.max_active_jobs:
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                f"You already have {used.active_jobs} download(s) in progress "
-                f"(max {used.max_active_jobs}). Wait for one to finish."
-            ),
-            headers={"Retry-After": "30"},
-        )
+    with quota_guard(session, f"user:{user.id}"):
+        used = plan_usage(session, user, None)
+        if used.used_this_hour >= used.limit_per_hour:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"Hourly limit reached ({used.used_this_hour}/{used.limit_per_hour} this hour, "
+                    "including downloads on this computer). Try again later."
+                ),
+                headers={"Retry-After": "600"},
+            )
+        if used.active_jobs >= used.max_active_jobs:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"You already have {used.active_jobs} download(s) in progress "
+                    f"(max {used.max_active_jobs}). Wait for one to finish."
+                ),
+                headers={"Retry-After": "30"},
+            )
 
-    row = DesktopJob(
-        id=_desktop_key(device, payload.job_id),
-        job_id=payload.job_id,
-        user_id=user.id,
-        device_id=device.id,
-        preset=payload.preset,
-        status="running",
-        host=_host(url),
-    )
-    session.add(row)
-    session.commit()
+        row = DesktopJob(
+            id=_desktop_key(device, payload.job_id),
+            job_id=payload.job_id,
+            user_id=user.id,
+            device_id=device.id,
+            preset=payload.preset,
+            status="running",
+            host=_host(url),
+        )
+        session.add(row)
+        session.commit()
     return _desktop_read(session, user, row)
 
 

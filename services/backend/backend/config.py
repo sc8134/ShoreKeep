@@ -20,6 +20,15 @@ class Settings(BaseSettings):
     worker_poll_seconds: float = 1.0
     storage_backend: str = "local"
 
+    # Database: empty DATABASE_URL keeps the local SQLite file; set a
+    # postgresql+psycopg:// URL for multi-process production deployments.
+    database_url: str = ""
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+    db_pool_recycle: int = 1800
+    # Create tables directly instead of running Alembic (throwaway databases only).
+    db_auto_create: bool = False
+
     # Accounts and sessions
     secret_key: str = "dev-insecure-change-me"
     session_days: int = 30
@@ -58,6 +67,13 @@ class Settings(BaseSettings):
     # Pro perk: larger per-file cap than the free tier
     pro_max_filesize_mb: int = 4096
 
+    # Public demo: caps every visitor and turns off billing and cookies.
+    demo_mode: bool = False
+    demo_max_preset: str = "480p"
+    demo_max_filesize_mb: int = 200
+    demo_jobs_per_hour: int = 5
+    demo_max_active_jobs: int = 1
+
     r2_bucket: str = ""
     r2_endpoint: str = ""
     r2_access_key: str = ""
@@ -66,6 +82,17 @@ class Settings(BaseSettings):
     @property
     def db_path(self) -> Path:
         return self.data_dir / "app.db"
+
+    @property
+    def sqlalchemy_url(self) -> str:
+        url = (self.database_url or "").strip()
+        if not url:
+            return f"sqlite:///{self.db_path}"
+        # Hosted providers hand out postgres:// URLs; use the psycopg 3 driver.
+        for prefix in ("postgres://", "postgresql://"):
+            if url.startswith(prefix):
+                return "postgresql+psycopg://" + url[len(prefix) :]
+        return url
 
     @property
     def media_dir(self) -> Path:
@@ -96,7 +123,8 @@ class Settings(BaseSettings):
     @property
     def billing_enabled(self) -> bool:
         return bool(
-            self.paddle_api_key
+            not self.demo_mode
+            and self.paddle_api_key
             and self.paddle_client_token
             and self.paddle_webhook_secret
             and self.paddle_price_pro_monthly

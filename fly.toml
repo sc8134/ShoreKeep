@@ -1,0 +1,54 @@
+# Fly.io config for Shorekeep.
+#
+# One machine runs the API and the worker together (services/backend/start.sh)
+# so both share the same /data volume. For larger deployments use an R2 bucket
+# for storage and split the worker into its own process group.
+#
+# First deploy:
+#   fly launch --copy-config --no-deploy
+#   fly volumes create shorekeep_data --size 10 --region sin
+#   fly secrets set DATABASE_URL=postgresql://... SECRET_KEY=... PUBLIC_BASE_URL=https://<app>.fly.dev
+#   fly deploy
+app = "shorekeep"
+primary_region = "sin"
+
+[build]
+  dockerfile = "infra/Dockerfile.backend"
+
+[deploy]
+  release_command = "alembic -c /app/alembic.ini upgrade head"
+
+[processes]
+  app = "bash /app/start.sh"
+
+[env]
+  DATA_DIR = "/data"
+  PORT = "8000"
+  COOKIE_SECURE = "true"
+  DEMO_MODE = "true"
+  STORAGE_BACKEND = "local"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+
+[mounts]
+  source = "shorekeep_data"
+  destination = "/data"
+
+[checks]
+  [checks.health]
+    port = 8000
+    type = "http"
+    path = "/v1/health"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"

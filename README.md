@@ -2,14 +2,18 @@
 
 ![Shorekeep](assets/brand/shorekeep-lockup-light.png)
 
-Shorekeep is a video/audio download platform with a hybrid engine. The product is Shorekeep; **MY-DL** remains the transfer engine inside it.
+![Release](https://img.shields.io/github/v/release/sc8134/ShoreKeep)
+![CI](https://github.com/sc8134/ShoreKeep/actions/workflows/ci.yml/badge.svg)
+![License](https://img.shields.io/badge/license-proprietary-informational)
+
+Shorekeep is a video/audio download platform with a hybrid engine. The product is Shorekeep; MY-DL remains the transfer engine inside it.
 
 - **yt-dlp** handles extraction (URL → media streams) and fragmented protocols (HLS/DASH, live)
 - **MY-DL** ([sc8134/MY-DL](https://github.com/sc8134/MY-DL)) handles byte transfer for progressive HTTP streams: parallel ranges, resume, rate limiting, integrity checks
 - **ffmpeg** muxes/remuxes (`-c copy` where possible) and extracts MP3 audio
-- **FastAPI + SQLite** API and single-page UI, with SSE progress and a DB-polling worker
+- **FastAPI** API and single-page UI, with SSE progress and a DB-polling worker; **SQLite** locally, **Postgres** in production via Alembic
 
-Status: **Phase 4 + billing**. Single jobs and playlists, presets, progress streaming, auto-expiry, email/password accounts, free-tier limits, optional Turnstile, encrypted per-job cookies, VTT subtitles and chapter metadata, structured error codes, an optional desktop app that downloads locally with automatic browser cookies and server-enforced metering, and Paddle billing for Pro ($5/month or $45/year, 4 GB files). Priority queue and Postgres/Redis scaling come next.
+Status: **0.4.0, production track**. Single jobs and playlists, presets, progress streaming, auto-expiry, email/password accounts, free-tier limits, optional Turnstile, encrypted per-job cookies, VTT subtitles and chapter metadata, structured error codes, an optional desktop app for Windows, macOS, and Linux with automatic browser cookies and server-enforced metering, Paddle billing for Pro ($5/month or $45/year, 4 GB files), Postgres with advisory-lock quotas and `SKIP LOCKED` claiming, a public demo mode, Render/Fly/Docker deploy configs, and signed, checksummed desktop releases. Next: priority queue, billing polish, and a browser extension for Chromium cookies.
 
 ## Architecture
 
@@ -20,10 +24,10 @@ Browser UI (served by API)
    ▼
 FastAPI (backend/api)
    │  auth + quota + Turnstile gate
-   │  rows in SQLite (queued jobs, users, sessions)
+   │  rows in the database (queued jobs, users, sessions)
    ▼
 Worker loop (python -m backend.engine.worker)
-   │  claim job → pipeline
+   │  claim job (SKIP LOCKED on Postgres) → pipeline
    ├─ direct media URL ─────────────► MY-DL transfer
    └─ site URL ─► yt-dlp extract ──► format planner
                       │                ├─ progressive https → MY-DL
@@ -31,7 +35,7 @@ Worker loop (python -m backend.engine.worker)
                       ▼
                   ffmpeg merge -c copy / MP3 encode
                       ▼
-              storage (local now, R2-ready) → signed/ephemeral link
+              storage (local or R2) → signed/ephemeral link
 ```
 
 Optional **desktop companion** path (signed-in users only):
@@ -124,12 +128,14 @@ Pasting `cookies.txt` is too much to ask of non-technical users, so the web app 
 - is reachable only on `127.0.0.1:47821` and only from configured web origins;
 - reserves each download with the API before starting, so desktop and cloud jobs share one hourly quota and one concurrency cap.
 
-### Setup (Windows, one time)
+### Setup (Windows, macOS, Linux)
 
 ```bash
-.venv/Scripts/python.exe -m pip install -e services/backend -e services/desktop
-.venv/Scripts/python.exe -m mydl_desktop.agent --register   # registers shorekeep:// for the current user
+python -m pip install -e services/backend -e services/desktop
+python -m mydl_desktop.agent --register   # registers shorekeep:// for the current user
 ```
+
+On Windows this writes `HKCU\Software\Classes\shorekeep` (no admin rights). On Linux it writes `~/.local/share/applications/shorekeep.desktop` and calls `xdg-mime`. On macOS it registers the built `Shorekeep.app`, or creates a small wrapper app in `~/Applications` when running from source. `--unregister` removes it on all three.
 
 The Python package keeps the internal name `mydl_desktop`; only the product, protocol, and visible strings are branded Shorekeep.
 
@@ -144,24 +150,46 @@ python -m mydl_desktop.agent --pair TOKEN # claim a pairing token without a brow
 python -m mydl_desktop.agent --unregister # remove the shorekeep:// handler
 ```
 
-`--register` writes only `HKCU\Software\Classes\shorekeep`; it needs no admin rights and is removed by `--unregister`. On macOS/Linux, protocol registration is not implemented; start `--serve` manually and keep the site's origin in `allowed_origins`.
+If the URL handler is unavailable, start `--serve` manually and keep the site's origin in `allowed_origins`.
 
-### Dev installer (Windows, unsigned)
+### Builds and installers
 
-The companion can also be built as a standalone app and a per-user installer, without a Python environment on the target machine:
+All desktop builds read the version from the root `VERSION` file.
 
 ```powershell
+# Windows: portable app, self-extracting setup, and Inno installer when ISCC.exe is present
 powershell -ExecutionPolicy Bypass -File infra/windows/build.ps1
 ```
 
-This produces:
+```bash
+# macOS: Shorekeep.app + zip (optional codesign/notarize via SIGN_IDENTITY and NOTARY_PROFILE)
+bash infra/macos/build.sh
+
+# Linux: onedir bundle + tarball
+bash infra/linux/build.sh
+```
+
+Windows produces:
 
 - `dist\Shorekeep\Shorekeep.exe`: the portable app. Launched normally it starts the bundled web app (API, UI, and worker) on `http://127.0.0.1:8000`, opens a native window against it, and keeps a tray icon; it also starts or reuses the local download agent and handles `shorekeep://` links. The same UI stays available in any browser at `http://127.0.0.1:8000`;
-- `dist\installer\Shorekeep-Setup-0.3.0.exe`: a self-extracting setup built with the same local PyInstaller toolchain.
+- `dist\installer\Shorekeep-Setup-<version>.exe`: the self-extracting setup;
+- `dist\installer\SHA256SUMS.txt`: checksums for the installers.
 
 The setup installs to `%LOCALAPPDATA%\Programs\Shorekeep` for the current user only (no admin prompt), registers `shorekeep://` under `HKCU`, adds a Start Menu shortcut and an entry in Settings > Apps, and optionally starts the app at sign-in. `--silent` and `--no-autostart` are supported for scripted test installs. Uninstall from Settings > Apps or run the installed `uninstall.ps1`; it stops the app and removes the program folder, protocol, autostart entry, shortcut, and Settings > Apps entry. Your device token, settings, and log in `%APPDATA%\Shorekeep` and your files in `%USERPROFILE%\Downloads\Shorekeep` are kept, so delete those folders by hand for a full wipe.
 
-This is an **unsigned development build**: no code-signing certificate is involved, so SmartScreen shows "Unknown publisher" on first run and the app is not suitable for public distribution yet. The Inno Setup script (`infra/windows/Shorekeep.iss`) is kept for the later step when a certificate is purchased; `build.ps1` uses it automatically if `ISCC.exe` is available.
+### Code signing
+
+`build.ps1` signs the app executable before packaging, then signs the setup and Inno installers, and writes `SHA256SUMS.txt`. Signing is opt-in; set one of:
+
+```
+SHOREKEEP_SIGN_CERT_PATH=C:\keys\shorekeep.pfx
+SHOREKEEP_SIGN_CERT_PASSWORD=...
+# or SHOREKEEP_SIGN_THUMBPRINT / SHOREKEEP_SIGN_SUBJECT for a store certificate
+```
+
+`signtool` is found from PATH, `SIGNTOOL`, or the Windows SDK. Timestamping uses `SHOREKEEP_TIMESTAMP_URL` (DigiCert by default). Without a certificate the build still succeeds and prints that artifacts are unsigned.
+
+The release workflow (`.github/workflows/release.yml`) runs on `v*` tags, builds Windows, Linux, and macOS bundles, combines checksums, and attaches everything to the GitHub release. Add `WINDOWS_CERT_PFX_BASE64` and `WINDOWS_CERT_PASSWORD` as repository secrets to sign CI builds. macOS signing uses `MACOS_SIGN_IDENTITY`. Full steps are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ### Brand assets
 
@@ -259,7 +287,11 @@ See `.env.example`. Notable knobs:
 
 - `SECRET_KEY`: **required in production**: encrypts BYO cookies and salts IP hashing. Changing it invalidates stored cookies (jobs fail with a clear message) but not sessions.
 - `COOKIE_SECURE=true` when served over HTTPS.
-- `DATA_DIR`: SQLite DB, media, and per-job work dirs
+- `DATABASE_URL`: leave empty for SQLite at `DATA_DIR/app.db`; set a Postgres URL in production and run `alembic -c services/backend/alembic.ini upgrade head`
+- `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_RECYCLE`: Postgres pool tuning
+- `DB_AUTO_CREATE=true`: create tables without Alembic, only for throwaway demo databases
+- `DEMO_MODE=true`: caps every visitor at `DEMO_MAX_PRESET`, `DEMO_MAX_FILESIZE_MB`, `DEMO_JOBS_PER_HOUR`, and `DEMO_MAX_ACTIVE_JOBS`; disables billing and rejects cookies
+- `DATA_DIR`: SQLite DB (dev), media, and per-job work dirs
 - `RETENTION_SECONDS`: auto-delete finished files and mark jobs `expired` (default 1 h)
 - `MAX_FILESIZE_MB`: enforced twice: format selection refuses larger estimates, and the transfer aborts if actual bytes exceed it
 - `PLAYLIST_MAX_ITEMS`: entries expanded per playlist job (default 20)
@@ -287,18 +319,38 @@ See `.env.example`. Notable knobs:
 .venv/Scripts/python.exe -m pytest services/backend/tests -q
 ```
 
-133 tests cover format planning/routing, size caps (including the per-job Pro cap), DRM/playlist rejection, playlist ZIP building, subtitle selection, HLS subtitle merging, chapter parsing, the error taxonomy, URL safety (SSRF), rate limiting, auth/sessions, quotas, job ownership, CSRF origin checks, Turnstile gating, cookie parsing/encryption, agent pairing, job flows, shared cloud/desktop metering (idempotent reserves, concurrency, stale reservations, offline replay), billing (Paddle checkout gating, webhook signatures and idempotency, subscription activation/cancellation, lazy expiry, portal links), and the desktop agent (host guard, local pairing, plan gating, SSRF). Desktop tests are skipped automatically if the `mydl_desktop` package is not installed. `conftest.py` points `DATA_DIR` at a temp directory so tests never touch your dev database.
+145 tests cover format planning/routing, size caps (including the per-job Pro cap), DRM/playlist rejection, playlist ZIP building, subtitle selection, HLS subtitle merging, chapter parsing, the error taxonomy, URL safety (SSRF), rate limiting, auth/sessions, quotas, job ownership, CSRF origin checks, Turnstile gating, cookie parsing/encryption, agent pairing, job flows, shared cloud/desktop metering (idempotent reserves, concurrency, stale reservations, offline replay), billing (Paddle checkout gating, webhook signatures and idempotency, subscription activation/cancellation, lazy expiry, portal links), demo-mode caps, version consistency across packages and installers, cross-platform URL registration, and the desktop agent (host guard, local pairing, plan gating, SSRF). Desktop tests are skipped automatically if the `mydl_desktop` package is not installed. `conftest.py` points `DATA_DIR` at a temp directory so tests never touch your dev database.
 
 CI runs the same suite on every push and pull request (`.github/workflows/ci.yml`). A scheduled workflow (`.github/workflows/ytdlp-update.yml`) checks PyPI every Monday, bumps the `yt-dlp` floor in both packages, runs the suite against that exact release, and opens a pull request when a newer version exists.
 
 ## Deploy
 
+Local stack (SQLite, two processes):
+
 ```bash
-cp .env.example .env      # set SECRET_KEY (and COOKIE_SECURE=true behind HTTPS)
+cp .env.example .env
 docker compose -f infra/docker-compose.yml up --build
 ```
 
-Both containers share a `media_data` volume (SQLite + files). For multi-host scale, move to Postgres (`FOR UPDATE SKIP LOCKED` claiming), Redis for queue priority, and R2 for storage. The interfaces are already isolated (`db.py`, `engine/storage.py`). Multi-process API deployments should move quota checks into a transaction/lock (or Postgres advisory locks) since SQLite count-then-insert is not atomic across processes.
+Production stack (Postgres, migrations, API, worker):
+
+```bash
+cp .env.example .env   # set SECRET_KEY, POSTGRES_PASSWORD, PUBLIC_BASE_URL, COOKIE_SECURE=true
+docker compose -f infra/docker-compose.prod.yml up -d --build
+```
+
+Managed hosting:
+
+- **Render**: [render.yaml](render.yaml) creates the Postgres database, a web service running the API plus worker, a 10 GB disk, and a pre-deploy migration step.
+- **Fly.io**: [fly.toml](fly.toml) runs one machine with a volume and `alembic upgrade head` as the release command.
+
+Enable `DEMO_MODE=true` for a public demo: every visitor is capped (480p, 200 MB, 5 jobs/hour by default), billing is off, and cookies are rejected. Full runbook, signing steps, and the production checklist are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+Postgres gives atomic quota checks through `pg_advisory_xact_lock` and multi-worker claiming through `SELECT ... FOR UPDATE SKIP LOCKED`. R2 storage is supported for hosts that cannot share a disk.
+
+## License
+
+Proprietary, all rights reserved. See [LICENSE](LICENSE).
 
 ## Roadmap
 
@@ -307,19 +359,21 @@ Both containers share a `media_data` volume (SQLite + files). For multi-host sca
 - [x] Phase 2: accounts, free-tier limits, Turnstile, BYO-cookies (encrypted, per-job)
 - [x] Phase 2.5: desktop companion: local downloads, automatic browser cookies, `shorekeep://` pairing, shared server-side metering
 - [x] Phase 3a: billing (Paddle: $5/month or $45/year Pro, checkout, webhooks, customer portal, 4 GB Pro cap)
-- [ ] Phase 3b: priority queue and R2 in production
+- [x] Phase 3b: Postgres with atomic quotas, Alembic migrations, multi-worker claiming, R2 production storage
+- [ ] Phase 3c: priority queue and Redis-backed SSE fan-out
 - [x] Phase 4: playlists, subtitles/chapters, error taxonomy, weekly yt-dlp updates in CI
+- [x] Phase 5: cross-platform desktop (Windows, macOS, Linux), signed releases with checksums, public demo mode, Render/Fly deploy blueprints
 
 ## Known limitations
 
 - Playlists are exported as one ZIP (no per-item download links), capped by `PLAYLIST_MAX_ITEMS`; channels and nested lists are not expanded. Live streams and DRM content are still rejected
 - Subtitles are VTT sidecars only; other caption formats are skipped, and there is no embedding/translation yet
 - One job per worker at a time; add workers for concurrency
-- SQLite only; SSE polls the DB every 500 ms (off the event loop)
+- SSE polls the DB every 500 ms (off the event loop); it does not use Redis pub/sub yet
 - No email verification, password reset, or OAuth yet; a verification flow is needed before a public launch
 - Turnstile is off by default; enable it (with `SECRET_KEY` set) before exposing the API publicly
 - Billing needs a public deployment because Paddle delivers webhooks over HTTPS; the local and desktop builds run with billing disabled. Paddle must also approve the checkout domain, and the `$5`/`$45` labels are display-only values that must match the prices configured in Paddle
-- Desktop cookie extraction depends on the browser: Firefox works; Chromium 127+ App-Bound Encryption often blocks it. Device tokens are not revocable from the UI yet. A dev installer exists (`infra/windows/build.ps1`), but it is unsigned and unpublishable: code signing, auto-update, and a revocation UI are deferred until the product is validated
+- Desktop cookie extraction depends on the browser: Firefox works; Chromium 127+ App-Bound Encryption often blocks it. Device tokens are not revocable from the UI yet. Signed Windows installers, macOS and Linux bundles, and a release workflow exist, but macOS/Linux builds are best effort and have not been exercised on every distro
 - Desktop job history is in memory in the agent (gone on restart); files themselves remain on disk. Metering is cooperative: the server enforces quota for the shipped agent, but a modified client could under-report (it runs on the user's machine). Usage reports queued while offline are replayed later, so a job can land in a later hour bucket
 - SSRF guard blocks private/loopback targets at enqueue and before MY-DL transfers; production should still enforce egress firewall rules (redirect-based SSRF via yt-dlp extractors is not fully covered)
 

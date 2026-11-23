@@ -255,6 +255,13 @@
   }
   .sub::before { content: "\2726"; margin-right: 10px; color: var(--brass); font-style: normal; font-size: 10px; vertical-align: 1px; }
   .sub::after { content: "\2726"; margin-left: 10px; color: var(--brass); font-style: normal; font-size: 10px; vertical-align: 1px; }
+  .demo-banner {
+    margin: 14px auto 0; max-width: 660px; text-align: center;
+    font-size: 12px; letter-spacing: 0.03em; color: #4a3a26;
+    background: rgba(246, 231, 197, 0.88);
+    border: 1px solid rgba(122, 92, 52, 0.45);
+    border-radius: 999px; padding: 7px 16px;
+  }
   .card {
     position: relative;
     background:
@@ -803,6 +810,7 @@
     </div>
     <h1>Shorekeep</h1>
     <p class="sub">Paste a link. Pick a format. Keep it.</p>
+    <p class="demo-banner" id="demo-banner" hidden></p>
   </header>
 
   <main class="card">
@@ -1466,12 +1474,35 @@
   });
 
   function presetAllowed(name) {
-    if (!me && config && config.limits && config.limits.anon_max_preset) {
-      const cap = config.limits.anon_max_preset;
+    const cap = presetCap();
+    if (cap) {
       if (name === "audio") return true;
       return (PRESET_RANK[name] || 99) <= (PRESET_RANK[cap] || 4);
     }
     return true;
+  }
+
+  function presetCap() {
+    if (config && config.demo && config.demo.enabled) return config.demo.max_preset || null;
+    if (!me && config && config.limits) return config.limits.anon_max_preset || null;
+    return null;
+  }
+
+  function applyDemoMode() {
+    const banner = document.getElementById("demo-banner");
+    const demo = config && config.demo;
+    if (!banner) return;
+    if (!demo || !demo.enabled) {
+      banner.hidden = true;
+      return;
+    }
+    banner.hidden = false;
+    banner.textContent = "Public demo: downloads capped at " + (demo.max_preset || "480p") +
+      " and " + demo.max_filesize_mb + " MB, " + demo.jobs_per_hour +
+      " per hour. Run Shorekeep locally for full quality.";
+    document.getElementById("upgrade").hidden = true;
+    document.getElementById("manage-billing").hidden = true;
+    document.getElementById("cookies-box").hidden = true;
   }
 
   function applyPresetGating() {
@@ -1479,11 +1510,13 @@
     chips.forEach(function (chip) {
       const allowed = presetAllowed(chip.dataset.preset);
       chip.disabled = !allowed;
-      chip.title = allowed ? "" : "Sign in free to unlock " + chip.textContent;
+      chip.title = allowed ? "" : (config && config.demo && config.demo.enabled
+        ? "Not available in the public demo"
+        : "Sign in free to unlock " + chip.textContent);
       if (!allowed && chip.getAttribute("aria-pressed") === "true") changed = true;
     });
     if (changed) {
-      const cap = config && config.limits ? config.limits.anon_max_preset : null;
+      const cap = presetCap();
       preset = cap && PRESET_RANK[cap] ? cap : "480p";
       chips.forEach(function (c) {
         c.setAttribute("aria-pressed", String(c.dataset.preset === preset && !c.disabled));
@@ -1836,6 +1869,7 @@
   async function loadConfig() {
     const result = await api("/v1/config");
     config = result.ok && result.body ? result.body : null;
+    applyDemoMode();
     if (config && config.billing) applyBillingConfig();
     if (config && config.turnstile && config.turnstile.enabled && config.turnstile.site_key) {
       turnstileBox.hidden = false;
