@@ -10,7 +10,7 @@ def utcnow() -> datetime:
 
 TERMINAL_STATUSES = {"done", "failed", "expired"}
 RUNNING_STATUSES = {"extracting", "downloading", "processing", "uploading"}
-ACTIVE_STATUSES = {"queued", *RUNNING_STATUSES}
+ACTIVE_STATUSES = {"queued", "paused", *RUNNING_STATUSES}
 
 
 class User(SQLModel, table=True):
@@ -104,6 +104,14 @@ class BillingEvent(SQLModel, table=True):
     received_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+class BandwidthSettings(SQLModel, table=True):
+    """Persisted global bandwidth limit. Single row keyed by id=1."""
+
+    id: int = Field(primary_key=True, default=1)
+    limit_kbps: float = Field(default=0.0)   # 0 = unlimited
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
 class CookieProfile(SQLModel, table=True):
     """Named, encrypted cookies.txt stored per user for reuse across jobs."""
 
@@ -163,6 +171,11 @@ class Job(SQLModel, table=True):
     # Playlist per-item children
     parent_job_id: str | None = Field(default=None, index=True, foreign_key="job.id")
     item_index: int | None = None
+
+    # Phase 1 (power controls): per-job bandwidth cap and auto-retry
+    bandwidth_limit_kbps: float = Field(default=0.0)  # 0 = use global / unlimited
+    retry_count: int = Field(default=0)
+    max_retries: int = Field(default=0)  # 0 = no auto-retry
 
     created_at: datetime = Field(default_factory=utcnow, index=True)
     started_at: datetime | None = None

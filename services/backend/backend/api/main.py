@@ -8,6 +8,7 @@ from ..config import settings
 from ..db import init_db
 from .agent import router as agent_router
 from .auth import router as auth_router
+from .bandwidth import router as bandwidth_router
 from .billing import router as billing_router
 from .cookie_profiles import router as cookie_profiles_router
 from .jobs import router as jobs_router
@@ -33,6 +34,7 @@ def _check_production_config() -> None:
 app = FastAPI(title="Shorekeep API", version=__version__)
 app.include_router(auth_router)
 app.include_router(agent_router)
+app.include_router(bandwidth_router)
 app.include_router(billing_router)
 app.include_router(cookie_profiles_router)
 app.include_router(jobs_router)

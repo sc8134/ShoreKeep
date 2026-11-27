@@ -7,6 +7,7 @@ from typing import Callable
 
 import yt_dlp
 
+from ..bandwidth import throttled_progress
 from ..config import settings
 from ..security import UnsafeURLError, assert_public_http_url
 from .remux import resolve_ffmpeg
@@ -38,6 +39,7 @@ def download_stream_mydl(
     dest: Path,
     on_progress: ProgressCb,
     connections: int | None = None,
+    rate_limit_kbps: float = 0.0,
 ) -> Path:
     if not HAS_MYDL or SegmentManager is None or ClientConfig is None:
         raise RuntimeError("MY-DL engine is not installed")
@@ -55,12 +57,15 @@ def download_stream_mydl(
     headers.setdefault("User-Agent", DEFAULT_UA)
     config = ClientConfig(headers=headers, timeout=30.0, retries=3)
 
+    # Wrap the progress callback with the bandwidth throttle.
+    on_progress = throttled_progress(on_progress, rate_limit_kbps)
+
     def hook(progress):  # mydl.Progress
         on_progress(progress.downloaded, progress.total, progress.speed_bps, progress.eta_seconds)
 
     manager = SegmentManager(config=config, progress=hook)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    logger.info("mydl transfer: %s (%s, protocol=%s)", dest.name, stream.format_id, stream.protocol)
+    logger.info("mydl transfer: %s (%s, protocol=%s, limit=%s kb/s)", dest.name, stream.format_id, stream.protocol, rate_limit_kbps or "none")
     return Path(
         manager.download(
             stream.url,
@@ -77,7 +82,11 @@ def download_with_ytdlp(
     out_base: Path,
     on_progress: ProgressCb,
     cookiefile: str | None = None,
+    rate_limit_kbps: float = 0.0,
 ) -> Path:
+    # Wrap the progress callback with the bandwidth throttle.
+    on_progress = throttled_progress(on_progress, rate_limit_kbps)
+
     def hook(status: dict) -> None:
         if status.get("status") != "downloading":
             return
@@ -106,13 +115,16 @@ def download_with_ytdlp(
         "socket_timeout": 30,
         "concurrent_fragment_downloads": 4,
     }
+    if rate_limit_kbps > 0:
+        # yt-dlp ratelimit is bytes/second
+        opts["ratelimit"] = int(rate_limit_kbps * 1024)
     if cookiefile:
         opts["cookiefile"] = cookiefile
     ffmpeg = resolve_ffmpeg()
     if ffmpeg:
         opts["ffmpeg_location"] = ffmpeg
 
-    logger.info("yt-dlp transfer: selector=%s url=%s", selector, webpage_url)
+    logger.info("yt-dlp transfer: selector=%s url=%s limit=%s kb/s", selector, webpage_url, rate_limit_kbps or "none")
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([webpage_url])
 

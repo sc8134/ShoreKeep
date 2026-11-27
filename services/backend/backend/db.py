@@ -57,6 +57,10 @@ _JOB_COLUMNS = {
     # Phase 7: playlist per-item children
     "parent_job_id": "VARCHAR",
     "item_index": "INTEGER",
+    # Phase 1 (power controls)
+    "bandwidth_limit_kbps": "REAL DEFAULT 0",
+    "retry_count": "INTEGER DEFAULT 0",
+    "max_retries": "INTEGER DEFAULT 0",
 }
 
 # User columns added after initial schema.
@@ -78,25 +82,17 @@ _REQUIRED_TABLES = {
     "billingevent",
     "job",
     "cookieprofile",
+    "bandwidthsettings",
 }
 
 # Columns that must exist on the job table after all migrations have run.
 # Used to catch a Postgres deployment that skipped `alembic upgrade head`.
 _REQUIRED_JOB_COLUMNS = {
-    "user_id",
-    "client_hash",
-    "cookies_enc",
-    "want_subtitles",
-    "subtitle_name",
-    "subtitle_path",
-    "subtitle_lang",
-    "chapters",
-    "playlist_index",
-    "playlist_count",
-    "error_code",
-    "max_filesize_mb",
-    "priority",
-    "run_after",
+    "user_id", "client_hash", "cookies_enc", "want_subtitles",
+    "subtitle_name", "subtitle_path", "subtitle_lang", "chapters",
+    "playlist_index", "playlist_count", "error_code", "max_filesize_mb",
+    "priority", "run_after", "parent_job_id", "item_index",
+    "bandwidth_limit_kbps", "retry_count", "max_retries",
 }
 
 

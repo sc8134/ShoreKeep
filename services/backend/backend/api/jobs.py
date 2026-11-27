@@ -19,7 +19,7 @@ from ..cookies import CookieError, encrypt_cookies, validate_cookies
 from ..db import engine, get_session, quota_guard
 from ..engine.errors import retryable_code
 from ..engine.storage import storage
-from ..models import ACTIVE_STATUSES, TERMINAL_STATUSES, CookieProfile, Job, User
+from ..models import ACTIVE_STATUSES, TERMINAL_STATUSES, CookieProfile, Job, User, utcnow
 from ..plans import plan_for, preset_allowed, usage as plan_usage
 from ..ratelimit import SlidingWindowLimiter
 from ..security import UnsafeURLError, assert_public_http_url
@@ -42,6 +42,8 @@ class JobCreate(BaseModel):
     turnstile_token: str | None = None
     priority: int = Field(default=0, ge=0, le=1)
     run_after: datetime | None = None
+    bandwidth_limit_kbps: float = Field(default=0.0, ge=0)
+    max_retries: int = Field(default=0, ge=0, le=10)
 
 
 class JobRead(BaseModel):
@@ -74,6 +76,9 @@ class JobRead(BaseModel):
     download_url: str | None
     subtitle_url: str | None = None
     items_url: str | None = None
+    bandwidth_limit_kbps: float = 0.0
+    max_retries: int = 0
+    retry_count: int = 0
 
 
 def _chapters(job: Job) -> list[dict] | None:
@@ -124,6 +129,9 @@ def _to_read(job: Job) -> JobRead:
             if (job.playlist_count and job.playlist_count > 1 and not job.parent_job_id)
             else None
         ),
+        bandwidth_limit_kbps=float(getattr(job, "bandwidth_limit_kbps", 0) or 0),
+        max_retries=int(getattr(job, "max_retries", 0) or 0),
+        retry_count=int(getattr(job, "retry_count", 0) or 0),
     )
 
 
@@ -302,6 +310,8 @@ def create_job(
             max_filesize_mb=plan.max_filesize_mb,
             priority=payload.priority,
             run_after=run_after,
+            bandwidth_limit_kbps=payload.bandwidth_limit_kbps,
+            max_retries=payload.max_retries,
         )
         session.add(job)
         session.commit()
@@ -417,6 +427,73 @@ async def job_events(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+class JobPatch(BaseModel):
+    action: str | None = None          # pause | resume | move_top | move_bottom
+    bandwidth_limit_kbps: float | None = Field(default=None, ge=0)
+    priority: int | None = Field(default=None, ge=0, le=1)
+    max_retries: int | None = Field(default=None, ge=0, le=10)
+
+
+@router.patch("/jobs/{job_id}", response_model=JobRead)
+def patch_job(
+    job_id: str,
+    payload: JobPatch,
+    user: User | None = Depends(optional_user),
+    session: Session = Depends(get_session),
+) -> JobRead:
+    job = _get_visible_job(session, job_id, user)
+
+    if payload.action == "pause":
+        if job.status not in {"queued"}:
+            raise HTTPException(
+                status_code=400,
+                detail="Only queued jobs can be paused. Running jobs finish first.",
+            )
+        job.status = "paused"
+        job.stage = "paused"
+
+    elif payload.action == "resume":
+        if job.status != "paused":
+            raise HTTPException(status_code=400, detail="Job is not paused.")
+        job.status = "queued"
+        job.stage = "queued"
+
+    elif payload.action == "move_top":
+        if job.status not in {"queued", "paused"}:
+            raise HTTPException(status_code=400, detail="Only queued or paused jobs can be reordered.")
+        # Reorder by bumping priority and backdating created_at to claim ahead of others.
+        from datetime import timedelta as _td
+        job.priority = max(job.priority, 1)
+        job.created_at = utcnow() - _td(days=1)
+
+    elif payload.action == "move_bottom":
+        if job.status not in {"queued", "paused"}:
+            raise HTTPException(status_code=400, detail="Only queued or paused jobs can be reordered.")
+        job.priority = 0
+        job.created_at = utcnow()
+
+    elif payload.action is not None:
+        raise HTTPException(status_code=400, detail=f"Unknown action '{payload.action}'. Use pause, resume, move_top, or move_bottom.")
+
+    if payload.bandwidth_limit_kbps is not None:
+        job.bandwidth_limit_kbps = payload.bandwidth_limit_kbps
+
+    if payload.priority is not None:
+        from ..plans import plan_for
+        plan = plan_for(user)
+        if payload.priority > 0 and (user is None or plan.name != "pro"):
+            raise HTTPException(status_code=403, detail="Priority scheduling is a Pro feature.")
+        job.priority = payload.priority
+
+    if payload.max_retries is not None:
+        job.max_retries = payload.max_retries
+
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    return _to_read(job)
 
 
 @router.get("/jobs/{job_id}/items", response_model=list[JobRead])

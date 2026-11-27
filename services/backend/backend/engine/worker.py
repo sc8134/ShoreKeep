@@ -52,6 +52,38 @@ def claim_job() -> str | None:
         return candidate.id if result.rowcount else None
 
 
+def _auto_retry(job_id: str) -> None:
+    """Re-queue a failed retryable job if max_retries allows it."""
+    from .errors import retryable_code
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+        if job is None or job.status != "failed":
+            return
+        max_r = int(job.max_retries or 0)
+        retried = int(job.retry_count or 0)
+        if max_r <= 0 or retried >= max_r:
+            return
+        if not retryable_code(job.error_code):
+            return
+        # Exponential backoff: 2^retry × 15s, capped at 10 min.
+        backoff = min(15 * (2 ** retried), 600)
+        job.status = "queued"
+        job.stage = "queued"
+        job.error = None
+        job.error_code = None
+        job.retry_count = retried + 1
+        job.run_after = utcnow() + timedelta(seconds=backoff)
+        job.progress = 0.0
+        job.downloaded_bytes = 0
+        job.speed_bps = 0.0
+        job.eta_seconds = None
+        job.started_at = None
+        job.finished_at = None
+        session.add(job)
+        session.commit()
+        logger.info("auto-retry %d/%d for job %s (backoff %ds)", retried + 1, max_r, job_id, backoff)
+
+
 def sweep_expired() -> None:
     cutoff = utcnow() - timedelta(seconds=settings.retention_seconds)
     with Session(engine) as session:
@@ -146,6 +178,9 @@ def sweep_sessions() -> None:
 
 def main() -> None:
     init_db()
+    # Reload persisted bandwidth limit into memory.
+    from ..api.bandwidth import _load_persisted
+    _load_persisted()
     logger.info("worker %s started (poll=%.1fs)", WORKER_ID, settings.worker_poll_seconds)
     last_sweep = 0.0
     while True:
@@ -182,6 +217,7 @@ def main() -> None:
         except Exception:
             logger.exception("unhandled failure in job %s", job_id)
         logger.info("job %s finished in %.1fs", job_id, time.monotonic() - started)
+        _auto_retry(job_id)
 
 
 if __name__ == "__main__":

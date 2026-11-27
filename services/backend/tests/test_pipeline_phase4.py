@@ -32,7 +32,7 @@ def isolate_dirs(tmp_path, monkeypatch):
     (tmp_path / "media").mkdir(parents=True, exist_ok=True)
 
 
-def fake_download(plan, work, reporter, cookiefile=None, start=8, end=90):
+def fake_download(plan, work, reporter, cookiefile=None, start=8, end=90, rate_limit_kbps=0.0):
     dest = work / f"media.{plan.ext}"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(b"video-bytes")
@@ -144,7 +144,7 @@ def test_failure_records_error_code(tmp_path, monkeypatch):
         lambda info, preset, max_bytes=0: make_plan(),
     )
 
-    def fail(plan, work, reporter, cookiefile=None, start=8, end=90):
+    def fail(plan, work, reporter, cookiefile=None, start=8, end=90, rate_limit_kbps=0.0):
         raise RuntimeError("ERROR: Sign in to confirm you're not a bot")
 
     monkeypatch.setattr(pipeline, "_download_once", fail)

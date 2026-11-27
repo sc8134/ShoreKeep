@@ -189,6 +189,7 @@ def run_job(job_id: str) -> None:
         url, preset, cookies_enc = job.url, job.preset, job.cookies_enc
         want_subtitles = bool(job.want_subtitles)
         limit_mb = job.max_filesize_mb or settings.max_filesize_mb
+        rate_limit_kbps = float(job.bandwidth_limit_kbps or 0)
 
     reporter = Reporter(job_id, limit_mb * 1024 * 1024)
     work = settings.work_dir / job_id
@@ -241,7 +242,7 @@ def run_job(job_id: str) -> None:
                 reporter.set_chapters(chapters)
 
         reporter.stage("downloading", "downloading", 8)
-        final = _download_with_refresh(plan, work, reporter, cookie_file, cookie_text)
+        final = _download_with_refresh(plan, work, reporter, cookie_file, cookie_text, rate_limit_kbps=rate_limit_kbps)
 
         if plan.preset == "audio" and final.suffix.lower() != ".mp3":
             reporter.stage("processing", "processing", 90)
@@ -405,9 +406,10 @@ def _download_with_refresh(
     cookie_text: str | None = None,
     start: float = 8,
     end: float = 90,
+    rate_limit_kbps: float = 0.0,
 ) -> Path:
     try:
-        return _download_once(plan, work, reporter, cookiefile, start, end)
+        return _download_once(plan, work, reporter, cookiefile, start, end, rate_limit_kbps)
     except (SizeLimitExceeded, JobTimeout):
         raise
     except Exception as exc:
@@ -423,7 +425,7 @@ def _download_with_refresh(
             apply_to_plan(refreshed, cookie_text)
         reporter.set_meta(refreshed)
         reporter.stage("downloading", "downloading", start)
-        return _download_once(refreshed, work, reporter, cookiefile, start, end)
+        return _download_once(refreshed, work, reporter, cookiefile, start, end, rate_limit_kbps)
 
 
 def _download_once(
@@ -433,6 +435,7 @@ def _download_once(
     cookiefile: str | None = None,
     start: float = 8,
     end: float = 90,
+    rate_limit_kbps: float = 0.0,
 ) -> Path:
     if plan.engine == "ytdlp":
         return download_with_ytdlp(
@@ -441,20 +444,21 @@ def _download_once(
             work / "media",
             reporter.download_progress(start, end),
             cookiefile=cookiefile,
+            rate_limit_kbps=rate_limit_kbps,
         )
 
     if plan.mode in {"progressive", "audio"}:
         stream = plan.video or plan.audio
         assert stream is not None
         dest = work / f"media.{stream.ext or 'bin'}"
-        return download_stream_mydl(stream, dest, reporter.download_progress(start, end - 2))
+        return download_stream_mydl(stream, dest, reporter.download_progress(start, end - 2), rate_limit_kbps=rate_limit_kbps)
 
     assert plan.video is not None and plan.audio is not None
     mid = start + (end - start) * 0.55
     video_path = work / f"video.{plan.video.ext or 'bin'}"
     audio_path = work / f"audio.{plan.audio.ext or 'bin'}"
-    video = download_stream_mydl(plan.video, video_path, reporter.download_progress(start, mid))
-    audio = download_stream_mydl(plan.audio, audio_path, reporter.download_progress(mid, end - 3))
+    video = download_stream_mydl(plan.video, video_path, reporter.download_progress(start, mid), rate_limit_kbps=rate_limit_kbps)
+    audio = download_stream_mydl(plan.audio, audio_path, reporter.download_progress(mid, end - 3), rate_limit_kbps=rate_limit_kbps)
 
     reporter.stage("processing", "processing", end - 2)
     out = work / f"merged.{plan.ext}"
