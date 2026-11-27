@@ -92,16 +92,32 @@ def ensure_agent(config: AgentConfig, timeout: float = 12.0) -> bool:
 
 
 def serve(config: AgentConfig) -> None:
+    import threading
     import uvicorn
 
     from . import metering
     from .jobs import JobManager
     from .server import create_app, start_idle_watch
+    from .updater import check_for_update
+    from . import __version__
 
     manager = JobManager(config)
     app = create_app(config, manager)
     metering.start_flusher(config)
     start_idle_watch(manager, config.idle_timeout_minutes, config)
+
+    # Check for updates in the background — never blocks startup.
+    def _update_check() -> None:
+        result = check_for_update(__version__)
+        if result:
+            logger.info(
+                "update available: v%s — %s", result["version"], result["url"]
+            )
+            # Store on the app so /health can expose it.
+            app.state.update_available = result
+
+    threading.Thread(target=_update_check, name="update-check", daemon=True).start()
+
     logger.info("agent serving on %s (downloads: %s)", AGENT_BASE, config.download_path)
     uvicorn.run(app, host=AGENT_HOST, port=AGENT_PORT, log_level="warning", access_log=False)
 

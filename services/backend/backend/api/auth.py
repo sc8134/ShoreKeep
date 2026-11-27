@@ -13,7 +13,10 @@ from ..auth import (
     SESSION_COOKIE,
     AuthError,
     burn_password_check,
+    consume_reset_token,
     create_session,
+    generate_reset_token,
+    generate_verify_token,
     get_user_by_email,
     hash_password,
     normalize_email,
@@ -21,10 +24,13 @@ from ..auth import (
     revoke_session,
     validate_email,
     validate_password,
+    verify_email_token,
     verify_password,
+    verify_reset_token,
 )
 from ..config import settings
 from ..db import get_session
+from ..email import send_password_reset_email, send_verification_email
 from ..models import User
 from ..plans import Usage, usage as plan_usage
 from ..ratelimit import SlidingWindowLimiter
@@ -45,11 +51,18 @@ class UserRead(BaseModel):
     id: str
     email: str
     plan: str
+    email_verified: bool = False
     created_at: datetime
 
     @classmethod
     def from_user(cls, user: User) -> "UserRead":
-        return cls(id=user.id, email=user.email, plan=user.plan, created_at=user.created_at)
+        return cls(
+            id=user.id,
+            email=user.email,
+            plan=user.plan,
+            email_verified=bool(getattr(user, "email_verified", False)),
+            created_at=user.created_at,
+        )
 
 
 class UsageRead(BaseModel):
@@ -149,6 +162,14 @@ def register(
     purge_expired_sessions(session)
     token = create_session(session, user, ip, request.headers.get("user-agent"))
     _set_session_cookie(response, token)
+
+    # send verification email — non-blocking, never fails the request
+    try:
+        verify_token = generate_verify_token(session, user)
+        send_verification_email(user.email, verify_token)
+    except Exception:
+        pass  # logged inside send_verification_email
+
     return me_read(session, user)
 
 
@@ -194,6 +215,74 @@ def me(
     session: Session = Depends(get_session),
 ) -> MeRead:
     return me_read(session, user)
+
+
+# ---------------------------------------------------------------------------
+# Email verification
+# ---------------------------------------------------------------------------
+
+forgot_limiter = SlidingWindowLimiter(5, 15 * 60)
+
+
+@router.get("/verify")
+def verify_email(
+    token: str,
+    session: Session = Depends(get_session),
+) -> dict:
+    user = verify_email_token(session, token)
+    if user is None:
+        raise HTTPException(status_code=400, detail="This verification link is invalid or has expired.")
+    return {"verified": True, "email": user.email}
+
+
+class ForgotRequest(BaseModel):
+    email: str
+
+
+class ResetRequest(BaseModel):
+    token: str
+    password: str
+
+
+@router.post("/forgot", status_code=200)
+def forgot_password(
+    payload: ForgotRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> dict:
+    ip = client_ip(request)
+    _rate_limit(forgot_limiter, ip, "Too many password-reset requests. Try again later.")
+
+    email = normalize_email(payload.email)
+    user = get_user_by_email(session, email)
+    # always return 200 — no user enumeration
+    if user is not None and user.status == "active":
+        try:
+            reset_token = generate_reset_token(session, user)
+            send_password_reset_email(user.email, reset_token)
+        except Exception:
+            pass
+    return {"detail": "If that email is registered you will receive a reset link shortly."}
+
+
+@router.post("/reset-password", status_code=200)
+def reset_password(
+    payload: ResetRequest,
+    session: Session = Depends(get_session),
+) -> dict:
+    try:
+        validate_password(payload.password)
+    except AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    user = verify_reset_token(session, payload.token)
+    if user is None:
+        raise HTTPException(status_code=400, detail="This reset link is invalid or has expired.")
+
+    user.password_hash = hash_password(payload.password)
+    session.add(user)
+    consume_reset_token(session, user)
+    return {"detail": "Password updated. You can now sign in."}
 
 
 def config_payload() -> dict[str, Any]:

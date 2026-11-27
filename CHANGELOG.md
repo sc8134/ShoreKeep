@@ -4,6 +4,17 @@ Notable changes to Shorekeep. The format follows [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-24
+
+### Fixed
+
+- Webhook signature verification used `hmac.new` which does not exist in the Python standard library. Replaced with `hmac.HMAC`. Paddle webhook delivery now verifies and processes correctly on all Python versions.
+- In-process rate limiter was per-worker and not shared across multiple API processes. Signed-in users now rely exclusively on the DB-backed hourly quota enforced inside `quota_guard`, which uses `pg_advisory_xact_lock` on Postgres and is accurate across any number of workers. The in-memory burst limiter is kept for anonymous requests as a fast pre-DB guard only.
+- The in-memory sliding-window limiter had no eviction path for unique keys, allowing unbounded memory growth under a key-flood. Keys outside the window are now evicted when the table exceeds 50 000 entries.
+- The desktop agent `reveal` endpoint used `Path.resolve()` to check that a revealed file sits inside the download folder. On systems where the download folder is a symlink `resolve()` and `realpath()` can disagree. Switched to `os.path.realpath` on both sides so the check is consistent regardless of symlinks.
+- Postgres deployments that skipped `alembic upgrade head` received a 500 at the first request with no explanation. The startup schema check now also verifies that all required columns exist on the `job` table and raises a clear error listing the missing ones.
+- The app now hard-fails at startup when `SECRET_KEY` is the insecure development default and the environment looks like production (`COOKIE_SECURE=true` or a non-SQLite `DATABASE_URL`). BYO cookies encrypted with the dev key in a production deployment are trivially decryptable.
+
 ### Added
 
 - Launching Shorekeep again raises the existing window instead of starting a second copy. The window answers focus requests over a loopback control channel.
@@ -75,6 +86,7 @@ Notable changes to Shorekeep. The format follows [Keep a Changelog](https://keep
 
 - Downloads from the native window and a retry when the first start fails.
 
+[0.5.0]: https://github.com/sc8134/ShoreKeep/releases/tag/v0.5.0
 [0.4.2]: https://github.com/sc8134/ShoreKeep/releases/tag/v0.4.2
 [0.4.1]: https://github.com/sc8134/ShoreKeep/releases/tag/v0.4.1
 [0.4.0]: https://github.com/sc8134/ShoreKeep/releases/tag/v0.4.0

@@ -25,9 +25,15 @@ WORKER_ID = f"worker-{uuid4().hex[:8]}"
 
 def claim_job() -> str | None:
     with Session(engine) as session:
-        statement = select(Job).where(Job.status == "queued").order_by(Job.created_at).limit(1)
+        now = utcnow()
+        statement = (
+            select(Job)
+            .where(Job.status == "queued")
+            .where((Job.run_after == None) | (Job.run_after <= now))  # noqa: E711
+            .order_by(Job.priority.desc(), Job.created_at)
+            .limit(1)
+        )
         if IS_POSTGRES:
-            # Let several workers claim different rows instead of all racing for the first.
             statement = statement.with_for_update(skip_locked=True)
         candidate = session.exec(statement).first()
         if candidate is None:

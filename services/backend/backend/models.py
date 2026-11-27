@@ -20,6 +20,13 @@ class User(SQLModel, table=True):
     plan: str = "free"
     status: str = "active"
     created_at: datetime = Field(default_factory=utcnow, index=True)
+    # Email verification
+    email_verified: bool = Field(default=False)
+    email_verify_token_hash: str | None = Field(default=None, index=True)
+    email_verify_expires_at: datetime | None = None
+    # Password reset
+    reset_token_hash: str | None = Field(default=None, index=True)
+    reset_token_expires_at: datetime | None = None
 
 
 class AuthSession(SQLModel, table=True):
@@ -97,6 +104,18 @@ class BillingEvent(SQLModel, table=True):
     received_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+class CookieProfile(SQLModel, table=True):
+    """Named, encrypted cookies.txt stored per user for reuse across jobs."""
+
+    id: str = Field(primary_key=True, default_factory=lambda: uuid4().hex)
+    user_id: str = Field(index=True, foreign_key="user.id")
+    name: str = Field(max_length=64)
+    domain: str = Field(max_length=253)
+    cookies_enc: str
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
 class Job(SQLModel, table=True):
     id: str = Field(primary_key=True)
     url: str
@@ -136,6 +155,14 @@ class Job(SQLModel, table=True):
     error: str | None = None
     error_code: str | None = None
     worker_id: str | None = None
+
+    # Priority and scheduling
+    priority: int = Field(default=0)   # 0 = normal, 1 = high (Pro only)
+    run_after: datetime | None = None  # if set, worker skips until now >= run_after
+
+    # Playlist per-item children
+    parent_job_id: str | None = Field(default=None, index=True, foreign_key="job.id")
+    item_index: int | None = None
 
     created_at: datetime = Field(default_factory=utcnow, index=True)
     started_at: datetime | None = None

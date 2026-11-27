@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from ..agent_auth import claim_pair, create_pair, resolve_device
 from ..config import settings
@@ -195,6 +195,40 @@ def claim_pairing(
         user=UserRead.from_user(user),
         limits=_limits(user),
     )
+
+
+@router.get("/devices", response_model=list[DeviceRead])
+def list_devices(
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+) -> list[DeviceRead]:
+    devices = session.exec(
+        select(AgentDevice).where(AgentDevice.user_id == user.id).order_by(AgentDevice.created_at.desc())
+    ).all()
+    return [
+        DeviceRead(
+            id=d.id,
+            label=d.label,
+            user=UserRead.from_user(user),
+            limits=_limits(user),
+            usage=usage_read(plan_usage(session, user, None)),
+            created_at=d.created_at,
+        )
+        for d in devices
+    ]
+
+
+@router.delete("/devices/{device_id}", status_code=204)
+def revoke_device(
+    device_id: str,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+) -> None:
+    device = session.get(AgentDevice, device_id)
+    if device is None or device.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Device not found")
+    session.delete(device)
+    session.commit()
 
 
 @router.get("/me", response_model=DeviceRead)

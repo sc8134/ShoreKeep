@@ -44,11 +44,9 @@ def _reset_limiters() -> None:
     from backend.config import settings
 
     jobs_api.anon_limiter = SlidingWindowLimiter(settings.anon_jobs_per_ip_hour, 3600)
-    jobs_api.user_limiter = SlidingWindowLimiter(
-        max(settings.pro_jobs_per_user_hour, settings.free_jobs_per_user_hour), 3600
-    )
     auth_api.register_limiter = SlidingWindowLimiter(10, 900)
     auth_api.login_limiter = SlidingWindowLimiter(20, 900)
+    auth_api.forgot_limiter = SlidingWindowLimiter(5, 900)
     agent_api.pair_limiter = SlidingWindowLimiter(10, 3600)
     agent_api.claim_limiter = SlidingWindowLimiter(30, 900)
     billing_api.checkout_limiter = SlidingWindowLimiter(10, 900)

@@ -156,3 +156,76 @@ def hash_ip(client_ip: str | None) -> str | None:
         return None
     digest = hashlib.sha256(f"{settings.secret_key}:{client_ip}".encode("utf-8")).hexdigest()
     return digest[:32]
+
+
+# ---------------------------------------------------------------------------
+# Email verification
+# ---------------------------------------------------------------------------
+
+def generate_verify_token(session: Session, user) -> str:
+    """Generate a 24-hour email verification token, store its hash, return raw token."""
+    token = secrets.token_urlsafe(32)
+    user.email_verify_token_hash = hashlib.sha256(token.encode()).hexdigest()
+    user.email_verify_expires_at = utcnow() + timedelta(seconds=settings.email_verify_ttl_seconds)
+    session.add(user)
+    session.commit()
+    return token
+
+
+def verify_email_token(session: Session, token: str):
+    """Consume a verification token. Returns the User if valid, else None."""
+    from sqlmodel import select
+    from .models import User
+
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    user = session.exec(
+        select(User).where(User.email_verify_token_hash == token_hash)
+    ).first()
+    if user is None:
+        return None
+    if user.email_verify_expires_at is None or user.email_verify_expires_at < utcnow():
+        return None
+    user.email_verified = True
+    user.email_verify_token_hash = None
+    user.email_verify_expires_at = None
+    session.add(user)
+    session.commit()
+    return user
+
+
+# ---------------------------------------------------------------------------
+# Password reset
+# ---------------------------------------------------------------------------
+
+def generate_reset_token(session: Session, user) -> str:
+    """Generate a 1-hour password reset token, store its hash, return raw token."""
+    token = secrets.token_urlsafe(32)
+    user.reset_token_hash = hashlib.sha256(token.encode()).hexdigest()
+    user.reset_token_expires_at = utcnow() + timedelta(seconds=settings.reset_token_ttl_seconds)
+    session.add(user)
+    session.commit()
+    return token
+
+
+def verify_reset_token(session: Session, token: str):
+    """Return the User if the reset token is valid and unexpired, else None."""
+    from sqlmodel import select
+    from .models import User
+
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    user = session.exec(
+        select(User).where(User.reset_token_hash == token_hash)
+    ).first()
+    if user is None:
+        return None
+    if user.reset_token_expires_at is None or user.reset_token_expires_at < utcnow():
+        return None
+    return user
+
+
+def consume_reset_token(session: Session, user) -> None:
+    """Invalidate the reset token after a successful password change."""
+    user.reset_token_hash = None
+    user.reset_token_expires_at = None
+    session.add(user)
+    session.commit()

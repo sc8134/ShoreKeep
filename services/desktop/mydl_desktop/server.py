@@ -61,6 +61,18 @@ class SettingsRequest(BaseModel):
     watch_folder: str | None = Field(default=None, max_length=512)
 
 
+class SettingsExport(BaseModel):
+    """Full config exported for backup/restore. Never includes device_token."""
+    download_dir: str
+    cookie_browser: str
+    idle_timeout_minutes: int = Field(ge=0)
+    hotkey: str
+    clipboard_monitor: bool
+    watch_folder: str
+    allowed_origins: list[str]
+    version: str
+
+
 class PairRegistry:
     """Resolves pair tokens from the web app into a paired user.
 
@@ -182,6 +194,7 @@ def create_app(
     @app.get("/health")
     def health() -> dict[str, Any]:
         latest = manager.activity.latest()
+        update_available = getattr(app.state, "update_available", None)
         return {
             "ok": True,
             "app": "shorekeep-desktop",
@@ -191,6 +204,7 @@ def create_app(
             "active": manager.active_count(),
             "active_jobs": manager.active_jobs(limit=3),
             "pending": detector.current(),
+            "update_available": update_available,
             "last_event": (
                 {
                     "id": latest.get("id"),
@@ -236,8 +250,10 @@ def create_app(
         entry = manager.activity.find(payload.id)
         if entry is None or not entry.get("output_path"):
             raise HTTPException(status_code=404, detail="Download not found")
-        root = config.download_path.resolve()
-        target = Path(entry["output_path"]).resolve()
+        # Resolve symlinks on both sides so a symlinked download_path cannot
+        # allow traversal outside the real directory.
+        root = Path(os.path.realpath(config.download_path))
+        target = Path(os.path.realpath(entry["output_path"]))
         if root != target and root not in target.parents:
             raise HTTPException(status_code=403, detail="File is outside the download folder")
         if not target.exists():
@@ -302,6 +318,87 @@ def create_app(
                 config.watch_folder = str(path)
             else:
                 config.watch_folder = ""
+        config.save()
+        return _settings()
+
+    # -----------------------------------------------------------------------
+    # Settings export / import
+    # -----------------------------------------------------------------------
+
+    _VALID_BROWSERS = {"auto", "firefox", "chrome", "edge", "brave", "chromium", "off"}
+
+    @app.get("/v1/settings/export")
+    def export_settings(_: None = Depends(require_control)) -> SettingsExport:
+        return SettingsExport(
+            download_dir=str(config.download_path),
+            cookie_browser=config.cookie_browser,
+            idle_timeout_minutes=config.idle_timeout_minutes,
+            hotkey=config.hotkey,
+            clipboard_monitor=bool(config.clipboard_monitor),
+            watch_folder=config.watch_folder or "",
+            allowed_origins=list(config.allowed_origins),
+            version=__version__,
+        )
+
+    _VALID_BROWSERS = {"auto", "firefox", "chrome", "edge", "brave", "chromium", "off"}
+
+    @app.post("/v1/settings/import")
+    def import_settings(
+        payload: SettingsExport,
+        _: None = Depends(require_control),
+    ) -> dict[str, Any]:
+        # Validate download_dir
+        try:
+            dl_path = Path(os.path.expanduser(payload.download_dir))
+            dl_path.mkdir(parents=True, exist_ok=True)
+            if not dl_path.is_dir():
+                raise ValueError("not a directory")
+            config.download_dir = str(dl_path)
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid download_dir: {exc}") from exc
+
+        # Validate cookie_browser
+        if payload.cookie_browser.lower() not in _VALID_BROWSERS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"cookie_browser must be one of {sorted(_VALID_BROWSERS)}",
+            )
+        config.cookie_browser = payload.cookie_browser.lower()
+
+        # idle_timeout_minutes
+        if payload.idle_timeout_minutes < 0:
+            raise HTTPException(status_code=400, detail="idle_timeout_minutes must be >= 0")
+        config.idle_timeout_minutes = payload.idle_timeout_minutes
+
+        # hotkey — reuse existing parser from config
+        from .config import AgentConfig as _AC
+        try:
+            _AC.validate_hotkey(payload.hotkey)
+        except (ValueError, AttributeError):
+            pass  # hotkey validation is best-effort; store as-is
+        config.hotkey = payload.hotkey
+
+        # clipboard_monitor
+        config.clipboard_monitor = bool(payload.clipboard_monitor)
+
+        # watch_folder
+        folder = (payload.watch_folder or "").strip()
+        if folder:
+            try:
+                wf = Path(os.path.expanduser(folder))
+                wf.mkdir(parents=True, exist_ok=True)
+                if not wf.is_dir():
+                    raise ValueError("not a directory")
+                config.watch_folder = str(wf)
+            except (OSError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid watch_folder: {exc}") from exc
+        else:
+            config.watch_folder = ""
+
+        # allowed_origins
+        if payload.allowed_origins:
+            config.allowed_origins = [o.strip().rstrip("/") for o in payload.allowed_origins if o.strip()]
+
         config.save()
         return _settings()
 

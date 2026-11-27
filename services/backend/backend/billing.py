@@ -123,10 +123,11 @@ def verify_webhook_signature(raw_body: bytes, header: str | None, secret: str | 
         return False
     if abs(time.time() - sent_at) > WEBHOOK_TOLERANCE_SECONDS:
         return False
-    expected = hmac.new(
+    expected = hmac.HMAC(
         secret.encode(), timestamp.encode() + b":" + raw_body, hashlib.sha256
     ).hexdigest()
-    return any(hmac.compare_digest(expected, candidate) for candidate in digest.split(","))
+    # Paddle can deliver comma-separated candidates on retries; accept any match.
+    return any(hmac.compare_digest(expected, candidate.strip()) for candidate in digest.split(","))
 
 
 def _parse_dt(value: Any) -> datetime | None:

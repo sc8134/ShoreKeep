@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 import shutil
 import threading
 import time
@@ -14,6 +15,7 @@ from ..cookies import CookieError, apply_to_plan, decrypt_cookies, write_cookie_
 from ..db import engine
 from ..models import Job, utcnow
 from ..security import UnsafeURLError, assert_public_http_url
+from ..pubsub import IS_REDIS, publish_job_state
 from .errors import classify_error
 from .extract import build_plan, extract_info
 from .playlist import build_playlist_zip, entry_title, entry_url, is_playlist, playlist_entries
@@ -55,6 +57,8 @@ class Reporter:
                 logger.exception("failed to persist state for job %s", self.job_id)
                 return
             self._last_write = now
+            if IS_REDIS:
+                publish_job_state(self.job_id, {"job_id": self.job_id, **fields})
 
     def stage(self, stage: str, status: str, progress: float | None = None, **extra) -> None:
         fields: dict = {"stage": stage, "status": status, **extra}
@@ -139,6 +143,42 @@ class Reporter:
             eta_seconds=None,
             finished_at=utcnow(),
         )
+
+
+def _guess_mime(path: Path) -> str:
+    return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+
+
+def _store_playlist_children(
+    parent_job_id: str,
+    items: list[tuple[int, str, str, int, str]],
+) -> None:
+    """Create done child Job rows for each playlist item."""
+    if not items:
+        return
+    import uuid as _uuid
+    with Session(engine) as session:
+        for index, name, path, size, mime in items:
+            child = Job(
+                id=_uuid.uuid4().hex,
+                url="",
+                preset="best",
+                status="done",
+                stage="done",
+                progress=100.0,
+                downloaded_bytes=size,
+                total_bytes=size,
+                speed_bps=0.0,
+                output_name=name,
+                output_path=path,
+                output_size=size,
+                mime=mime,
+                parent_job_id=parent_job_id,
+                item_index=index,
+                finished_at=utcnow(),
+            )
+            session.add(child)
+        session.commit()
 
 
 def run_job(job_id: str) -> None:
@@ -254,8 +294,10 @@ def _run_playlist(
         playlist_index=0,
     )
 
+    item_results: list[tuple[int, str, str, int, str]] = []  # (index, name, path, size, mime)
+
     def download(entry: dict, item_dir: Path, index: int, count: int) -> list[tuple[str, Path]]:
-        return _download_playlist_item(
+        files = _download_playlist_item(
             entry,
             item_dir,
             index,
@@ -266,6 +308,13 @@ def _run_playlist(
             cookie_file,
             cookie_text,
         )
+        # capture first file (the media) for child job creation
+        if files:
+            fname, fpath = files[0]
+            if fpath.exists():
+                item_results.append((index, fname, str(fpath), fpath.stat().st_size,
+                                     _guess_mime(fpath)))
+        return files
 
     result = build_playlist_zip(
         title=title,
@@ -277,6 +326,9 @@ def _run_playlist(
     reporter.stage("uploading", "uploading", 95, playlist_index=result.saved)
     stored = storage.save(result.path, job_id, title)
     reporter.complete(stored)
+
+    # Create child Job rows for each downloaded item so the items endpoint works.
+    _store_playlist_children(job_id, item_results)
 
 
 def _download_playlist_item(

@@ -51,6 +51,21 @@ _JOB_COLUMNS = {
     "playlist_count": "INTEGER",
     "error_code": "VARCHAR",
     "max_filesize_mb": "INTEGER",
+    # Phase 5: priority queue + scheduling
+    "priority": "INTEGER DEFAULT 0",
+    "run_after": "DATETIME",
+    # Phase 7: playlist per-item children
+    "parent_job_id": "VARCHAR",
+    "item_index": "INTEGER",
+}
+
+# User columns added after initial schema.
+_USER_COLUMNS = {
+    "email_verified": "BOOLEAN DEFAULT 0",
+    "email_verify_token_hash": "VARCHAR",
+    "email_verify_expires_at": "DATETIME",
+    "reset_token_hash": "VARCHAR",
+    "reset_token_expires_at": "DATETIME",
 }
 
 _REQUIRED_TABLES = {
@@ -62,6 +77,26 @@ _REQUIRED_TABLES = {
     "subscription",
     "billingevent",
     "job",
+    "cookieprofile",
+}
+
+# Columns that must exist on the job table after all migrations have run.
+# Used to catch a Postgres deployment that skipped `alembic upgrade head`.
+_REQUIRED_JOB_COLUMNS = {
+    "user_id",
+    "client_hash",
+    "cookies_enc",
+    "want_subtitles",
+    "subtitle_name",
+    "subtitle_path",
+    "subtitle_lang",
+    "chapters",
+    "playlist_index",
+    "playlist_count",
+    "error_code",
+    "max_filesize_mb",
+    "priority",
+    "run_after",
 }
 
 
@@ -77,6 +112,22 @@ def _migrate_job_table() -> None:
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_job_client_hash ON job (client_hash)")
 
 
+def _migrate_user_table() -> None:
+    with engine.begin() as conn:
+        existing = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(user)")}
+        if not existing:
+            return
+        for name, ddl in _USER_COLUMNS.items():
+            if name not in existing:
+                conn.exec_driver_sql(f'ALTER TABLE "user" ADD COLUMN "{name}" {ddl}')
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_user_email_verify_token ON \"user\" (email_verify_token_hash)"
+        )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_user_reset_token ON \"user\" (reset_token_hash)"
+        )
+
+
 def _check_schema() -> None:
     missing = _REQUIRED_TABLES - set(inspect(engine).get_table_names())
     if missing:
@@ -86,6 +137,15 @@ def _check_schema() -> None:
             + "). Run `alembic upgrade head` before starting the app, or set "
             "DB_AUTO_CREATE=true for a throwaway database."
         )
+    if IS_POSTGRES and "job" in inspect(engine).get_table_names():
+        existing_columns = {col["name"] for col in inspect(engine).get_columns("job")}
+        missing_columns = _REQUIRED_JOB_COLUMNS - existing_columns
+        if missing_columns:
+            raise RuntimeError(
+                "The job table is missing columns ("
+                + ", ".join(sorted(missing_columns))
+                + "). Run `alembic upgrade head` before starting the app."
+            )
 
 
 def init_db() -> None:
@@ -98,6 +158,7 @@ def init_db() -> None:
         return
     SQLModel.metadata.create_all(engine)
     _migrate_job_table()
+    _migrate_user_table()
 
 
 def session() -> Session:
