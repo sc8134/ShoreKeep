@@ -4,6 +4,15 @@ Notable changes to Shorekeep. The format follows [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-24
+
+### Added
+
+- Bandwidth limiting — global speed cap (`GET/POST /v1/bandwidth`) persisted across restarts, plus per-job `bandwidth_limit_kbps` on job create and `PATCH /v1/jobs/{id}`. Both MY-DL and yt-dlp transfer paths throttled via a token-bucket limiter; effective rate is the minimum of global and per-job caps.
+- Queue pause/resume — `PATCH /v1/jobs/{id}` accepts `pause` and `resume` actions on queued jobs. Paused jobs are skipped by the worker until resumed.
+- Queue reordering — `move_top` bumps a job to the front of the queue; `move_bottom` sends it to the back.
+- Auto-retry with exponential backoff — jobs with `max_retries > 0` are automatically re-queued after failure on retryable error codes (network, timeout, bot_check, etc.) with backoff starting at 15s and doubling each retry, capped at 10 minutes.
+
 ## [0.5.0] - 2026-11-24
 
 ### Fixed
@@ -86,6 +95,7 @@ Notable changes to Shorekeep. The format follows [Keep a Changelog](https://keep
 
 - Downloads from the native window and a retry when the first start fails.
 
+[0.5.1]: https://github.com/sc8134/ShoreKeep/releases/tag/v0.5.1
 [0.5.0]: https://github.com/sc8134/ShoreKeep/releases/tag/v0.5.0
 [0.4.2]: https://github.com/sc8134/ShoreKeep/releases/tag/v0.4.2
 [0.4.1]: https://github.com/sc8134/ShoreKeep/releases/tag/v0.4.1
